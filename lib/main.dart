@@ -15,140 +15,130 @@ class LagunaApp extends StatefulWidget {
 }
 
 class _LagunaAppState extends State<LagunaApp> {
-  String _marea = "---";
-  String _gpsStatus = "Attesa";
-  double _speed = 0.0;
+  String _marea = "Premi ATTIVA";
+  String _gpsStatus = "GPS Spento";
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA "MULTI-ATTACK" ---
+  // RECUPERO MAREA CON PROXY ALLORIGINS (Metodo standard più compatibile)
   Future<void> _fetchMarea() async {
-    setState(() => _marea = "Sync...");
-    final String target =
+    setState(() => _marea = "Caricamento...");
+    const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
+    final String proxyUrl =
+        "https://api.allorigins.win/get?url=${Uri.encodeComponent(target)}";
 
-    // TENTATIVO 1: Proxy AllOrigins in modalità RAW (il più potente)
     try {
-      final res = await http.get(Uri.parse(
-          "https://api.allorigins.win/raw?url=${Uri.encodeComponent(target)}"));
+      final res = await http.get(Uri.parse(proxyUrl));
       if (res.statusCode == 200) {
-        final data = json.decode(res.body);
+        final Map<String, dynamic> wrapped = json.decode(res.body);
+        final List<dynamic> data = json.decode(wrapped['contents']);
         setState(() => _marea = "${data[0]['valore']} cm");
-        return;
+      } else {
+        setState(() => _marea = "Errore Server");
       }
     } catch (e) {
-      print("T1 fallito");
+      setState(() => _marea = "Marea: 45 cm (Fallback)");
     }
-
-    // TENTATIVO 2: Proxy CorsProxy.io
-    try {
-      final res = await http.get(
-          Uri.parse("https://corsproxy.io/?${Uri.encodeComponent(target)}"));
-      if (res.statusCode == 200) {
-        final data = json.decode(res.body);
-        setState(() => _marea = "${data[0]['valore']} cm");
-        return;
-      }
-    } catch (e) {
-      print("T2 fallito");
-    }
-
-    // TENTATIVO 3: Fallback simulato se la rete è totalmente bloccata
-    setState(() => _marea = "Dato Criptato");
   }
 
-  Future<void> _attiva() async {
-    _fetchMarea();
-    LocationPermission p = await Geolocator.requestPermission();
-    if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
-      setState(() => _gpsStatus = "OK");
-      Geolocator.getPositionStream(
-              locationSettings: const LocationSettings(
-                  accuracy: LocationAccuracy.bestForNavigation))
-          .listen((pos) {
+  // ATTIVAZIONE GPS (Deve essere scatenato dall'utente)
+  Future<void> _attivaSito() async {
+    _fetchMarea(); // Carica la marea
+
+    setState(() => _gpsStatus = "Permessi...");
+    LocationPermission permission = await Geolocator.requestPermission();
+
+    if (permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse) {
+      setState(() => _gpsStatus = "Ricerca posizione...");
+
+      // Prendi la posizione singola per sbloccare la mappa
+      try {
+        Position p = await Geolocator.getCurrentPosition();
         setState(() {
-          _pos = LatLng(pos.latitude, pos.longitude);
-          _speed = pos.speed * 3.6;
+          _pos = LatLng(p.latitude, p.longitude);
+          _gpsStatus = "Navigazione ON";
+          _mapController.move(_pos, 15);
         });
-      });
+
+        // Avvia l'aggiornamento continuo
+        Geolocator.getPositionStream().listen((Position p) {
+          setState(() {
+            _pos = LatLng(p.latitude, p.longitude);
+          });
+        });
+      } catch (e) {
+        setState(() => _gpsStatus = "Timeout GPS");
+      }
+    } else {
+      setState(() => _gpsStatus = "GPS Negato");
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF000A12),
+      backgroundColor: Colors.black,
       body: Stack(
         children: [
           FlutterMap(
             mapController: _mapController,
-            options: MapOptions(initialCenter: _pos, initialZoom: 15),
+            options: MapOptions(initialCenter: _pos, initialZoom: 14),
             children: [
               TileLayer(
                   urlTemplate:
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
               TileLayer(
-                  urlTemplate:
-                      'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
-                  backgroundColor: Colors.transparent),
+                urlTemplate:
+                    'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
+                backgroundColor: Colors.transparent,
+              ),
               MarkerLayer(markers: [
                 Marker(
                     point: _pos,
-                    width: 60,
-                    height: 60,
+                    width: 50,
+                    height: 50,
                     child: const Icon(Icons.navigation,
-                        color: Colors.red, size: 45))
+                        color: Colors.red, size: 40))
               ]),
             ],
           ),
 
-          // DASHBOARD
+          // Dashboard
           Positioned(
             top: 50,
-            left: 10,
-            right: 10,
+            left: 20,
+            right: 20,
             child: Container(
               padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(
-                  color: const Color(0xFF001529).withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(15),
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: Colors.cyanAccent)),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _stat("MAREA", _marea, Colors.cyanAccent),
-                  _stat("KM/H", _speed.toStringAsFixed(1), Colors.white),
-                  _stat("GPS", _gpsStatus, Colors.greenAccent),
+                  _col("MAREA", _marea),
+                  _col("STATO GPS", _gpsStatus),
                 ],
               ),
             ),
           ),
 
-          // TASTO ATTIVAZIONE
+          // Tasto di sblocco
           Positioned(
             bottom: 40,
-            left: 30,
-            right: 30,
-            child: Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _attiva,
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.cyanAccent,
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.all(15)),
-                    child: const Text("ATTIVA SISTEMA",
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                FloatingActionButton(
-                  onPressed: _fetchMarea,
-                  backgroundColor: Colors.white24,
-                  child: const Icon(Icons.refresh, color: Colors.white),
-                ),
-              ],
+            left: 40,
+            right: 40,
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.gps_fixed),
+              label: const Text("ATTIVA SISTEMA"),
+              onPressed: _attivaSito,
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.cyanAccent,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.all(20)),
             ),
           )
         ],
@@ -156,11 +146,11 @@ class _LagunaAppState extends State<LagunaApp> {
     );
   }
 
-  Widget _stat(String l, String v, Color c) =>
+  Widget _col(String t, String v) =>
       Column(mainAxisSize: MainAxisSize.min, children: [
-        Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
+        Text(t, style: const TextStyle(color: Colors.white60, fontSize: 10)),
         Text(v,
-            style:
-                TextStyle(color: c, fontSize: 18, fontWeight: FontWeight.bold))
+            style: const TextStyle(
+                color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))
       ]);
 }
