@@ -15,65 +15,73 @@ class LagunaApp extends StatefulWidget {
 }
 
 class _LagunaAppState extends State<LagunaApp> {
-  String _marea = "---";
-  String _gpsLog = "In attesa di attivazione...";
-  LatLng _pos = const LatLng(45.4371, 12.3326); // Default Venezia
+  String _marea = "Sincronizza";
+  String _gpsStatus = "Attesa";
+  String _debugLog = "Pronto";
+  LatLng _pos = const LatLng(45.4292, 12.3205);
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA DEFINITIVA (Proxy con decodifica manuale) ---
+  // --- MOTORE MAREA RESILIENTE ---
   Future<void> _fetchMarea() async {
-    setState(() => _marea = "Sync...");
-    try {
-      // Usiamo AllOrigins ma leggiamo il contenuto come stringa pura
-      final url = Uri.parse(
-          "https://api.allorigins.win/get?url=${Uri.encodeComponent('https://portale.comune.venezia.it/marea/esporta-dati?id=1')}");
-      final res = await http.get(url);
-      final wrapped = json.decode(res.body);
-      final List data = json.decode(wrapped['contents']);
-      setState(() => _marea = "${data[0]['valore']} cm");
-    } catch (e) {
-      setState(() => _marea = "45 cm (Fix)");
+    setState(() => _marea = "...");
+    const String target =
+        "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
+
+    // Lista di 3 diversi tunnel (proxy) per bypassare il blocco del telefono
+    final List<String> proxies = [
+      "https://api.allorigins.win/get?url=", // AllOrigins
+      "https://corsproxy.io/?", // CorsProxy
+      "https://api.codetabs.com/v1/proxy?quest=" // CodeTabs
+    ];
+
+    for (var proxy in proxies) {
+      try {
+        final res = await http
+            .get(Uri.parse(proxy + Uri.encodeComponent(target)))
+            .timeout(const Duration(seconds: 5));
+
+        if (res.statusCode == 200) {
+          var jsonData;
+          if (proxy.contains("allorigins")) {
+            jsonData = json.decode(json.decode(res.body)['contents']);
+          } else {
+            jsonData = json.decode(res.body);
+          }
+
+          if (jsonData != null && jsonData.isNotEmpty) {
+            setState(() {
+              _marea = "${jsonData[0]['valore']} cm";
+              _debugLog = "Marea OK (via Proxy)";
+            });
+            return; // Successo! Esce dal ciclo.
+          }
+        }
+      } catch (e) {
+        debugPrint("Fallito con $proxy");
+      }
     }
+    setState(() {
+      _marea = "45 cm (Fallback)";
+      _debugLog = "Tutti i proxy bloccati. Riprova tra poco.";
+    });
   }
 
-  // --- LOGICA GPS CON CONSOLE DI LOG ---
-  Future<void> _attivaSistema() async {
-    _fetchMarea();
-    setState(() => _gpsLog = "Richiesta permessi...");
-
+  Future<void> _attivaGps() async {
+    _fetchMarea(); // Carica la marea appena clicchi
     LocationPermission permission = await Geolocator.requestPermission();
-
     if (permission == LocationPermission.always ||
         permission == LocationPermission.whileInUse) {
-      setState(() => _gpsLog = "Permessi OK. Cerco Satelliti...");
-
-      // Forza la ricerca della posizione singola
-      try {
-        Position p = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.bestForNavigation,
-        );
-        _updatePos(p);
-
-        // Attiva lo stream continuo
-        Geolocator.getPositionStream(
-          locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.high, distanceFilter: 2),
-        ).listen((p) => _updatePos(p));
-      } catch (e) {
-        setState(() => _gpsLog = "Errore hardware GPS: $e");
-      }
-    } else {
-      setState(() => _gpsLog = "Permesso negato dal sistema.");
+      setState(() => _gpsStatus = "GPS OK");
+      Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.bestForNavigation),
+      ).listen((Position p) {
+        setState(() {
+          _pos = LatLng(p.latitude, p.longitude);
+          _mapController.move(_pos, 16);
+        });
+      });
     }
-  }
-
-  void _updatePos(Position p) {
-    setState(() {
-      _pos = LatLng(p.latitude, p.longitude);
-      _gpsLog =
-          "LAT: ${_pos.latitude.toStringAsFixed(5)} LON: ${_pos.longitude.toStringAsFixed(5)}";
-    });
-    _mapController.move(_pos, 16); // Sposta la mappa sulla tua posizione
   }
 
   @override
@@ -104,7 +112,7 @@ class _LagunaAppState extends State<LagunaApp> {
             ],
           ),
 
-          // DASHBOARD
+          // DASHBOARD SUPERIORE
           Positioned(
             top: 50,
             left: 10,
@@ -112,48 +120,52 @@ class _LagunaAppState extends State<LagunaApp> {
             child: Container(
               padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(
-                  color: const Color(0xFF001529).withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.cyanAccent)),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                color: const Color(0xFF001529).withOpacity(0.9),
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: Colors.cyanAccent),
+              ),
+              child: Column(
                 children: [
-                  _stat("MAREA", _marea),
-                  _stat("GPS LOG", _gpsLog),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _stat("MAREA", _marea, Colors.cyanAccent),
+                      _stat("GPS", _gpsStatus, Colors.white),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(_debugLog,
+                      style:
+                          const TextStyle(color: Colors.white30, fontSize: 8)),
                 ],
               ),
             ),
           ),
 
-          // TASTO ATTIVAZIONE
-          Positioned(
-            bottom: 40,
-            left: 50,
-            right: 50,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.anchor),
-              label: const Text("AVVIA NAVIGATORE"),
-              onPressed: _attivaSistema,
-              style: ElevatedButton.styleFrom(
+          // TASTONE ATTIVAZIONE
+          if (_gpsStatus == "Attesa")
+            Center(
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.anchor),
+                label: const Text("ATTIVA NAVIGATORE"),
+                onPressed: _attivaGps,
+                style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.cyanAccent,
                   foregroundColor: Colors.black,
-                  padding: const EdgeInsets.all(20)),
-            ),
-          )
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+                ),
+              ),
+            )
         ],
       ),
     );
   }
 
-  Widget _stat(String l, String v) => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
-            Text(v,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold)),
-          ]);
+  Widget _stat(String l, String v, Color c) => Column(children: [
+        Text(l, style: const TextStyle(color: Colors.white60, fontSize: 10)),
+        Text(v,
+            style:
+                TextStyle(color: c, fontSize: 20, fontWeight: FontWeight.bold))
+      ]);
 }
