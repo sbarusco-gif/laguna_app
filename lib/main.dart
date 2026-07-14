@@ -15,75 +15,70 @@ class LagunaApp extends StatefulWidget {
 }
 
 class _LagunaAppState extends State<LagunaApp> {
-  String _marea = "Sincronizza";
-  String _gpsStatus = "GPS Spento";
-  double _speed = 0.0;
+  String _marea = "---";
+  String _status = "Pronto. Clicca ATTIVA";
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
 
-  @override
-  void initState() {
-    super.initState();
-    _fetchMarea();
-  }
-
-  // --- LOGICA MAREA DEFINITIVA PER WEB ---
+  // --- FUNZIONE MAREA CON PROXY ---
   Future<void> _fetchMarea() async {
     setState(() => _marea = "...");
-    final String target =
-        "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-
-    // Usiamo AllOrigins, che è il proxy più potente per aggirare i blocchi dei browser
-    final String proxyUrl =
-        "https://api.allorigins.win/get?url=${Uri.encodeComponent(target)}";
-
     try {
-      final res = await http.get(Uri.parse(proxyUrl));
-      if (res.statusCode == 200) {
-        // AllOrigins impacchetta il JSON dentro un campo chiamato 'contents'
-        final wrappedData = json.decode(res.body);
-        final List data = json.decode(wrappedData['contents']);
-
-        setState(() {
-          _marea = "${data[0]['valore']} cm";
-        });
-      } else {
-        setState(() => _marea = "Err ${res.statusCode}");
-      }
+      final url = Uri.parse(
+          'https://api.allorigins.win/get?url=${Uri.encodeComponent('https://portale.comune.venezia.it/marea/esporta-dati?id=1')}');
+      final res = await http.get(url);
+      final data = json.decode(json.decode(res.body)['contents']);
+      setState(() => _marea = "${data[0]['valore']} cm");
     } catch (e) {
-      setState(() => _marea = "Blocco CORS");
-      print("Errore: $e");
+      setState(() => _marea = "Errore");
     }
   }
 
+  // --- FUNZIONE GPS CON DIAGNOSTICA ---
   Future<void> _attivaGps() async {
-    _fetchMarea(); // Ricarica anche la marea al click
-    setState(() => _gpsStatus = "Ricerca...");
+    setState(() => _status = "Verifica permessi...");
 
     LocationPermission permission = await Geolocator.checkPermission();
+
     if (permission == LocationPermission.denied) {
+      setState(() => _status = "Richiesta permesso...");
       permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      setState(() => _status = "GPS BLOCCATO NELLE IMPOSTAZIONI");
+      return;
     }
 
     if (permission == LocationPermission.always ||
         permission == LocationPermission.whileInUse) {
-      Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.bestForNavigation),
-      ).listen((Position p) {
+      setState(() => _status = "Ricerca Satelliti...");
+      try {
+        Position pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 10),
+        );
         setState(() {
-          _pos = LatLng(p.latitude, p.longitude);
-          _speed = p.speed * 3.6;
-          _gpsStatus = "OK";
+          _pos = LatLng(pos.latitude, pos.longitude);
+          _status = "GPS OK";
+          _mapController.move(_pos, 15);
         });
-      });
+
+        // Avvia aggiornamento continuo
+        Geolocator.getPositionStream().listen((p) {
+          setState(() {
+            _pos = LatLng(p.latitude, p.longitude);
+          });
+        });
+      } catch (e) {
+        setState(() => _status = "Errore: Timeout GPS");
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
       body: Stack(
         children: [
           FlutterMap(
@@ -106,52 +101,50 @@ class _LagunaAppState extends State<LagunaApp> {
               ]),
             ],
           ),
-
-          // DASHBOARD
           Positioned(
             top: 50,
             left: 15,
             right: 15,
             child: Container(
               padding: const EdgeInsets.all(15),
-              decoration: BoxDecoration(
-                color: const Color(0xFF001529).withOpacity(0.9),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.cyanAccent),
-              ),
+              color: Colors.black87,
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _stat("MAREA", _marea),
-                  _stat("VELOCITÀ", "${_speed.toStringAsFixed(1)} km/h"),
-                  _stat("GPS", _gpsStatus),
+                  Column(children: [
+                    const Text("MAREA",
+                        style: TextStyle(color: Colors.white54, fontSize: 10)),
+                    Text(_marea,
+                        style: const TextStyle(
+                            color: Colors.cyanAccent,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold))
+                  ]),
+                  Column(children: [
+                    const Text("STATO GPS",
+                        style: TextStyle(color: Colors.white54, fontSize: 10)),
+                    Text(_status,
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 12))
+                  ]),
                 ],
               ),
             ),
           ),
-
           Positioned(
             bottom: 40,
             left: 50,
             right: 50,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.anchor),
-              label: const Text("ATTIVA"),
-              onPressed: _attivaGps,
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.cyanAccent,
-                  foregroundColor: Colors.black),
+            child: ElevatedButton(
+              onPressed: () {
+                _attivaGps();
+                _fetchMarea();
+              },
+              child: const Text("ATTIVA"),
             ),
           )
         ],
       ),
     );
   }
-
-  Widget _stat(String t, String v) => Column(children: [
-        Text(t, style: const TextStyle(color: Colors.white60, fontSize: 9)),
-        Text(v,
-            style: const TextStyle(
-                color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))
-      ]);
 }
