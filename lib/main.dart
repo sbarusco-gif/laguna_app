@@ -16,60 +16,64 @@ class LagunaApp extends StatefulWidget {
 
 class _LagunaAppState extends State<LagunaApp> {
   String _marea = "---";
-  int _mareaCm = 40; // Valore numerico per calcoli
+  int _mareaCm = 40;
   String _gpsStatus = "Attesa";
   double _speed = 0.0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA "GHOST" (Tenta 3 proxy diversi) ---
+  // --- DATABASE PUNTI DI INTERESSE (Benzina e Ospedali) ---
+  final List<Marker> _poiMarkers = [
+    // Distributori
+    Marker(
+        point: const LatLng(45.4265, 12.3218),
+        child: const Icon(Icons.local_gas_station,
+            color: Colors.orange, size: 25)), // Sacca Fisola
+    Marker(
+        point: const LatLng(45.4335, 12.3605),
+        child: const Icon(Icons.local_gas_station,
+            color: Colors.orange, size: 25)), // San Giorgio
+    Marker(
+        point: const LatLng(45.4495, 12.3312),
+        child: const Icon(Icons.local_gas_station,
+            color: Colors.orange, size: 25)), // San Leonardo
+    // Emergenza
+    Marker(
+        point: const LatLng(45.4395, 12.3425),
+        child: const Icon(Icons.medical_services,
+            color: Colors.red, size: 30)), // Ospedale Civile
+  ];
+
   Future<void> _fetchMarea() async {
-    setState(() => _marea = "Sync...");
     const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-
-    // Lista Proxy in ordine di potenza
-    final List<String> proxies = [
-      "https://api.codetabs.com/v1/proxy?quest=",
-      "https://api.allorigins.win/get?url=",
-      "https://corsproxy.io/?"
-    ];
-
-    for (var proxy in proxies) {
-      try {
-        final res = await http
-            .get(Uri.parse(proxy + Uri.encodeComponent(target)))
-            .timeout(const Duration(seconds: 5));
-        if (res.statusCode == 200) {
-          var data;
-          if (proxy.contains("allorigins")) {
-            data = json.decode(json.decode(res.body)['contents']);
-          } else {
-            data = json.decode(res.body);
-          }
-          setState(() {
-            _mareaCm =
-                int.parse(data[0]['valore'].toString().replaceAll('+', ''));
-            _marea = "$_mareaCm cm";
-          });
-          return;
-        }
-      } catch (e) {
-        print("Fallito proxy: $proxy");
+    final String proxyUrl = "https://api.codetabs.com/v1/proxy?quest=" +
+        Uri.encodeComponent(target);
+    try {
+      final res = await http
+          .get(Uri.parse(proxyUrl))
+          .timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        final List data = json.decode(res.body);
+        setState(() {
+          _mareaCm =
+              int.parse(data[0]['valore'].toString().replaceAll('+', ''));
+          _marea = "$_mareaCm cm";
+        });
       }
+    } catch (e) {
+      setState(() => _marea = "$_mareaCm cm (Man)");
     }
-    setState(() => _marea = "$_mareaCm cm (Man)");
   }
 
-  // Permette all'utente di regolare la marea a mano se internet fallisce
   void _regolaMareaManualmente() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Imposta Marea Manuale"),
+        title: const Text("Imposta Marea"),
         content: TextField(
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(hintText: "Esempio: 50"),
+          decoration: const InputDecoration(hintText: "Centimetri (es: 60)"),
           onSubmitted: (val) {
             setState(() {
               _mareaCm = int.parse(val);
@@ -88,9 +92,9 @@ class _LagunaAppState extends State<LagunaApp> {
     if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
       setState(() => _gpsStatus = "OK");
       Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 2),
-      ).listen((Position pos) {
+              locationSettings: const LocationSettings(
+                  accuracy: LocationAccuracy.bestForNavigation))
+          .listen((pos) {
         setState(() {
           _pos = LatLng(pos.latitude, pos.longitude);
           _speed = pos.speed * 3.6;
@@ -102,9 +106,7 @@ class _LagunaAppState extends State<LagunaApp> {
 
   @override
   Widget build(BuildContext context) {
-    // Profondità calcolata: 12 metri (Canale Giudecca) + marea
     double profondita = 12.0 + (_mareaCm / 100);
-
     return Scaffold(
       backgroundColor: const Color(0xFF000A12),
       body: Stack(
@@ -117,10 +119,10 @@ class _LagunaAppState extends State<LagunaApp> {
                   urlTemplate:
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
               TileLayer(
-                urlTemplate:
-                    'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
-                backgroundColor: Colors.transparent,
-              ),
+                  urlTemplate:
+                      'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
+                  backgroundColor: Colors.transparent),
+              MarkerLayer(markers: _poiMarkers), // Mostra Benzina e Ospedali
               MarkerLayer(markers: [
                 Marker(
                     point: _pos,
@@ -131,7 +133,6 @@ class _LagunaAppState extends State<LagunaApp> {
               ]),
             ],
           ),
-
           // DASHBOARD
           Positioned(
             top: 50,
@@ -140,17 +141,15 @@ class _LagunaAppState extends State<LagunaApp> {
             child: Container(
               padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(
-                color: const Color(0xFF001529).withOpacity(0.9),
-                borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: Colors.cyanAccent),
-              ),
+                  color: const Color(0xFF001529).withOpacity(0.9),
+                  borderRadius: BorderRadius.circular(15),
+                  border: Border.all(color: Colors.cyanAccent)),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   GestureDetector(
-                    onTap: _regolaMareaManualmente,
-                    child: _stat("MAREA", _marea, Colors.cyanAccent),
-                  ),
+                      onTap: _regolaMareaManualmente,
+                      child: _stat("MAREA", _marea, Colors.cyanAccent)),
                   _stat("PROF.", "${profondita.toStringAsFixed(1)}m",
                       Colors.white),
                   _stat("KM/H", _speed.toStringAsFixed(1), Colors.greenAccent),
@@ -158,44 +157,26 @@ class _LagunaAppState extends State<LagunaApp> {
               ),
             ),
           ),
-
           if (_gpsStatus != "OK")
             Center(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.anchor),
-                label: const Text("ATTIVA NAVIGATORE"),
-                onPressed: _attiva,
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.cyanAccent,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.all(20)),
-              ),
-            ),
-
-          Positioned(
-            bottom: 30,
-            right: 20,
-            child: FloatingActionButton(
-              backgroundColor: Colors.blueGrey,
-              onPressed: _fetchMarea,
-              child: const Icon(Icons.refresh, color: Colors.white),
-            ),
-          )
+                child: ElevatedButton.icon(
+                    icon: const Icon(Icons.anchor),
+                    label: const Text("ATTIVA"),
+                    onPressed: _attiva,
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.cyanAccent,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.all(20)))),
         ],
       ),
     );
   }
 
-  Widget _stat(String l, String v, Color c) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
-          Text(v,
-              style: TextStyle(
-                  color: c,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace')),
-        ],
-      );
+  Widget _stat(String l, String v, Color c) =>
+      Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
+        Text(v,
+            style:
+                TextStyle(color: c, fontSize: 18, fontWeight: FontWeight.bold))
+      ]);
 }
