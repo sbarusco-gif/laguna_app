@@ -18,55 +18,49 @@ class _LagunaAppState extends State<LagunaApp> {
   String _marea = "---";
   String _gpsStatus = "Attesa";
   double _speed = 0.0;
+  int _cmMarea = 0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA "SMART-TEXT" ---
+  // --- LOGICA MAREA "ULTRA-ROBUSTA" ---
   Future<void> _fetchMarea() async {
-    setState(() => _marea = "Sync...");
+    setState(() => _marea = "Recupero...");
+
+    // Proviamo il proxy più pulito (CodeTabs)
     final String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-
-    // Usiamo il ponte AllOrigins ma chiediamo il dato come 'contents' grezzo
-    final String proxyUrl =
-        "https://api.allorigins.win/get?url=${Uri.encodeComponent(target)}";
+    final String proxyUrl = "https://api.codetabs.com/v1/proxy?quest=" + target;
 
     try {
       final res = await http.get(Uri.parse(proxyUrl));
       if (res.statusCode == 200) {
-        // AllOrigins restituisce un oggetto con una stringa 'contents'
-        final Map<String, dynamic> wrapped = json.decode(res.body);
-        final String contents = wrapped['contents'];
-
-        // Decodifichiamo la stringa interna che contiene il vero JSON della marea
-        final List<dynamic> data = json.decode(contents);
-
-        if (data.isNotEmpty) {
-          setState(() {
-            _marea = "${data[0]['valore']} cm";
-          });
-          return;
-        }
+        final List data = json.decode(res.body);
+        setState(() {
+          _cmMarea = int.parse(data[0]['valore']);
+          _marea = "$_cmMarea cm";
+        });
+      } else {
+        _fetchMareaBackup(); // Se il primo fallisce, prova AllOrigins
       }
-      setState(() => _marea = "Riprovando...");
-      _fetchAlternative();
     } catch (e) {
-      _fetchAlternative();
+      _fetchMareaBackup();
     }
   }
 
-  // Secondo tentativo con proxy diverso se il primo fallisce
-  Future<void> _fetchAlternative() async {
-    final String target =
-        "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-    final String proxyUrl =
-        "https://corsproxy.io/?" + Uri.encodeComponent(target);
+  Future<void> _fetchMareaBackup() async {
     try {
-      final res = await http.get(Uri.parse(proxyUrl));
-      final List data = json.decode(res.body);
-      setState(() => _marea = "${data[0]['valore']} cm");
+      final url = "https://api.allorigins.win/get?url=" +
+          Uri.encodeComponent(
+              "https://portale.comune.venezia.it/marea/esporta-dati?id=1");
+      final res = await http.get(Uri.parse(url));
+      final wrapped = json.decode(res.body);
+      final List data = json.decode(wrapped['contents']);
+      setState(() {
+        _cmMarea = int.parse(data[0]['valore']);
+        _marea = "$_cmMarea cm";
+      });
     } catch (e) {
-      setState(() => _marea = "CORS Locked");
+      setState(() => _marea = "RETE OFF");
     }
   }
 
@@ -83,7 +77,6 @@ class _LagunaAppState extends State<LagunaApp> {
         setState(() {
           _pos = LatLng(p.latitude, p.longitude);
           _speed = p.speed * 3.6;
-          _mapController.move(_pos, 15);
         });
       });
     }
@@ -91,6 +84,9 @@ class _LagunaAppState extends State<LagunaApp> {
 
   @override
   Widget build(BuildContext context) {
+    // Calcolo profondità nel canale (12m fondale + marea)
+    double profondita = 12.0 + (_cmMarea / 100);
+
     return Scaffold(
       backgroundColor: const Color(0xFF000A12),
       body: Stack(
@@ -117,6 +113,8 @@ class _LagunaAppState extends State<LagunaApp> {
               ]),
             ],
           ),
+
+          // DASHBOARD NAUTICA
           Positioned(
             top: 50,
             left: 10,
@@ -132,28 +130,39 @@ class _LagunaAppState extends State<LagunaApp> {
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _stat("MAREA", _marea, Colors.cyanAccent),
-                  _stat("KM/H", _speed.toStringAsFixed(1), Colors.white),
-                  _stat("GPS", _gpsStatus,
-                      _gpsStatus == "OK" ? Colors.greenAccent : Colors.orange),
+                  _stat("PROF. CANALE", "${profondita.toStringAsFixed(1)} m",
+                      Colors.white),
+                  _stat("KM/H", _speed.toStringAsFixed(1), Colors.greenAccent),
                 ],
               ),
             ),
           ),
-          if (_gpsStatus != "OK")
-            Center(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.anchor, size: 30),
-                label: const Text("ATTIVA SISTEMA"),
-                onPressed: _attiva,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.cyanAccent,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.all(20),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30)),
+
+          // TASTI AZIONE
+          Positioned(
+            bottom: 40,
+            left: 30,
+            right: 30,
+            child: Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _attiva,
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.cyanAccent,
+                        foregroundColor: Colors.black),
+                    child: const Text("ATTIVA SISTEMA"),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 10),
+                FloatingActionButton(
+                  onPressed: _fetchMarea,
+                  backgroundColor: Colors.blueGrey,
+                  child: const Icon(Icons.refresh, color: Colors.white),
+                ),
+              ],
             ),
+          )
         ],
       ),
     );
@@ -165,8 +174,9 @@ class _LagunaAppState extends State<LagunaApp> {
           Text(label,
               style: const TextStyle(
                   color: Colors.white60,
-                  fontSize: 10,
+                  fontSize: 9,
                   fontWeight: FontWeight.bold)),
+          const SizedBox(height: 5),
           Text(value,
               style: TextStyle(
                   color: color,
