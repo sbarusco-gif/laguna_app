@@ -1,0 +1,33 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "Canale della Giudecca" },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [12.316, 45.432],
+          [12.325, 45.430],
+          [12.335, 45.428],
+          [12.348, 45.428],
+          [12.358, 45.431],
+          [12.365, 45.433]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Canale Grande" },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [12.327, 45.440],
+          [12.330, 45.436],
+          [12.336, 45.438],
+          [12.342, 45.441]
+        ]
+      }
+    }
+  ]
+}
