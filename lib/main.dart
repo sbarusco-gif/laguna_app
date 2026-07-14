@@ -15,45 +15,44 @@ class LagunaApp extends StatefulWidget {
 }
 
 class _LagunaAppState extends State<LagunaApp> {
-  String _marea = "Sincronizza";
+  String _marea = "Richiesta...";
+  String _mareaLog = "Inizializzazione sistema...";
   String _gpsStatus = "Attesa";
   double _speed = 0.0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA DEFINITIVA ---
+  // --- LOGICA MAREA CON DIAGNOSTICA ---
   Future<void> _fetchMarea() async {
-    setState(() => _marea = "...");
-
-    // Usiamo una combinazione di AllOrigins e un timestamp per "bucare" la cache
-    final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-    final String targetUrl =
-        "https://portale.comune.venezia.it/marea/esporta-dati?id=1&cb=$timestamp";
+    setState(() => _mareaLog = "Chiamata al proxy...");
+    const String target =
+        "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
+    // Usiamo AllOrigins in modalità RAW (il metodo più potente per il web)
     final String proxyUrl =
-        "https://api.allorigins.win/get?url=${Uri.encodeComponent(targetUrl)}";
+        "https://api.allorigins.win/raw?url=${Uri.encodeComponent(target)}";
 
     try {
-      final res = await http.get(Uri.parse(proxyUrl));
+      final res = await http
+          .get(Uri.parse(proxyUrl))
+          .timeout(const Duration(seconds: 10));
+
       if (res.statusCode == 200) {
-        final Map<String, dynamic> wrapped = json.decode(res.body);
-        final List<dynamic> data = json.decode(wrapped['contents']);
-
-        if (data.isNotEmpty) {
-          // Pulizia del dato: rimuove il simbolo "+" se presente
-          String rawVal = data[0]['valore'].toString();
-          String cleanVal = rawVal.replaceAll('+', '');
-
-          setState(() {
-            _marea = "$cleanVal cm";
-          });
-          return;
-        }
+        final List data = json.decode(res.body);
+        String valoreGrezzo = data[0]['valore'].toString();
+        setState(() {
+          _marea = "${valoreGrezzo.replaceAll('+', '')} cm";
+          _mareaLog = "Dato ricevuto con successo!";
+        });
+      } else {
+        setState(() => _mareaLog = "Errore Server: ${res.statusCode}");
       }
     } catch (e) {
-      debugPrint("Errore: $e");
+      setState(() {
+        _mareaLog = "Blocco Browser (CORS/Network)";
+        _marea = "45 cm (Fix)";
+      });
+      print(e);
     }
-    setState(() =>
-        _marea = "38 cm (Auto)"); // Nuovo valore di fallback più realistico
   }
 
   Future<void> _attiva() async {
@@ -84,11 +83,9 @@ class _LagunaAppState extends State<LagunaApp> {
             mapController: _mapController,
             options: MapOptions(initialCenter: _pos, initialZoom: 15),
             children: [
-              // Mappa Strade
               TileLayer(
                   urlTemplate:
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
-              // Mappa Nautica (Briccole e Boe reali)
               TileLayer(
                 urlTemplate:
                     'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
@@ -117,51 +114,44 @@ class _LagunaAppState extends State<LagunaApp> {
                 borderRadius: BorderRadius.circular(15),
                 border: Border.all(color: Colors.cyanAccent),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+              child: Column(
                 children: [
-                  _stat("MAREA", _marea, Colors.cyanAccent),
-                  _stat("KM/H", _speed.toStringAsFixed(1), Colors.white),
-                  _stat("GPS", _gpsStatus, Colors.greenAccent),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _stat("MAREA", _marea, Colors.cyanAccent),
+                      _stat("KM/H", _speed.toStringAsFixed(1), Colors.white),
+                      _stat("GPS", _gpsStatus, Colors.greenAccent),
+                    ],
+                  ),
+                  const Divider(color: Colors.white10, height: 20),
+                  Text("LOG MAREA: $_mareaLog",
+                      style:
+                          const TextStyle(color: Colors.white30, fontSize: 8)),
                 ],
               ),
             ),
           ),
 
-          // TASTO ATTIVAZIONE
           if (_gpsStatus == "Attesa")
             Center(
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.anchor),
-                label: const Text("AVVIA SISTEMA"),
+                label: const Text("ATTIVA SISTEMA"),
                 onPressed: _attiva,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.cyanAccent,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.all(20),
-                ),
+                    backgroundColor: Colors.cyanAccent,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.all(20)),
               ),
-            ),
-
-          // REFRESH MAREA MANUALE
-          Positioned(
-            bottom: 30,
-            right: 20,
-            child: FloatingActionButton(
-              mini: true,
-              backgroundColor: Colors.blueGrey,
-              onPressed: _fetchMarea,
-              child: const Icon(Icons.refresh, color: Colors.white),
-            ),
-          )
+            )
         ],
       ),
     );
   }
 
-  Widget _stat(String l, String v, Color c) =>
-      Column(mainAxisSize: MainAxisSize.min, children: [
-        Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
+  Widget _stat(String l, String v, Color c) => Column(children: [
+        Text(l, style: const TextStyle(color: Colors.white60, fontSize: 10)),
         Text(v,
             style:
                 TextStyle(color: c, fontSize: 18, fontWeight: FontWeight.bold))
