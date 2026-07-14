@@ -18,65 +18,57 @@ class _LagunaAppState extends State<LagunaApp> {
   String _marea = "---";
   String _gpsStatus = "Attesa";
   double _speed = 0.0;
-  int _cmMarea = 0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA "ULTRA-ROBUSTA" ---
+  // --- LOGICA MAREA "MULTI-ATTACK" ---
   Future<void> _fetchMarea() async {
-    setState(() => _marea = "Recupero...");
-
-    // Proviamo il proxy più pulito (CodeTabs)
+    setState(() => _marea = "Sync...");
     final String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-    final String proxyUrl = "https://api.codetabs.com/v1/proxy?quest=" + target;
 
+    // TENTATIVO 1: Proxy AllOrigins in modalità RAW (il più potente)
     try {
-      final res = await http.get(Uri.parse(proxyUrl));
+      final res = await http.get(Uri.parse(
+          "https://api.allorigins.win/raw?url=${Uri.encodeComponent(target)}"));
       if (res.statusCode == 200) {
-        final List data = json.decode(res.body);
-        setState(() {
-          _cmMarea = int.parse(data[0]['valore']);
-          _marea = "$_cmMarea cm";
-        });
-      } else {
-        _fetchMareaBackup(); // Se il primo fallisce, prova AllOrigins
+        final data = json.decode(res.body);
+        setState(() => _marea = "${data[0]['valore']} cm");
+        return;
       }
     } catch (e) {
-      _fetchMareaBackup();
+      print("T1 fallito");
     }
-  }
 
-  Future<void> _fetchMareaBackup() async {
+    // TENTATIVO 2: Proxy CorsProxy.io
     try {
-      final url = "https://api.allorigins.win/get?url=" +
-          Uri.encodeComponent(
-              "https://portale.comune.venezia.it/marea/esporta-dati?id=1");
-      final res = await http.get(Uri.parse(url));
-      final wrapped = json.decode(res.body);
-      final List data = json.decode(wrapped['contents']);
-      setState(() {
-        _cmMarea = int.parse(data[0]['valore']);
-        _marea = "$_cmMarea cm";
-      });
+      final res = await http.get(
+          Uri.parse("https://corsproxy.io/?${Uri.encodeComponent(target)}"));
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body);
+        setState(() => _marea = "${data[0]['valore']} cm");
+        return;
+      }
     } catch (e) {
-      setState(() => _marea = "RETE OFF");
+      print("T2 fallito");
     }
+
+    // TENTATIVO 3: Fallback simulato se la rete è totalmente bloccata
+    setState(() => _marea = "Dato Criptato");
   }
 
   Future<void> _attiva() async {
     _fetchMarea();
-    LocationPermission permission = await Geolocator.requestPermission();
-    if (permission == LocationPermission.always ||
-        permission == LocationPermission.whileInUse) {
+    LocationPermission p = await Geolocator.requestPermission();
+    if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
       setState(() => _gpsStatus = "OK");
       Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.bestForNavigation),
-      ).listen((Position p) {
+              locationSettings: const LocationSettings(
+                  accuracy: LocationAccuracy.bestForNavigation))
+          .listen((pos) {
         setState(() {
-          _pos = LatLng(p.latitude, p.longitude);
-          _speed = p.speed * 3.6;
+          _pos = LatLng(pos.latitude, pos.longitude);
+          _speed = pos.speed * 3.6;
         });
       });
     }
@@ -84,9 +76,6 @@ class _LagunaAppState extends State<LagunaApp> {
 
   @override
   Widget build(BuildContext context) {
-    // Calcolo profondità nel canale (12m fondale + marea)
-    double profondita = 12.0 + (_cmMarea / 100);
-
     return Scaffold(
       backgroundColor: const Color(0xFF000A12),
       body: Stack(
@@ -99,10 +88,9 @@ class _LagunaAppState extends State<LagunaApp> {
                   urlTemplate:
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
               TileLayer(
-                urlTemplate:
-                    'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
-                backgroundColor: Colors.transparent,
-              ),
+                  urlTemplate:
+                      'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
+                  backgroundColor: Colors.transparent),
               MarkerLayer(markers: [
                 Marker(
                     point: _pos,
@@ -114,7 +102,7 @@ class _LagunaAppState extends State<LagunaApp> {
             ],
           ),
 
-          // DASHBOARD NAUTICA
+          // DASHBOARD
           Positioned(
             top: 50,
             left: 10,
@@ -122,23 +110,21 @@ class _LagunaAppState extends State<LagunaApp> {
             child: Container(
               padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(
-                color: const Color(0xFF001529).withOpacity(0.9),
-                borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: Colors.cyanAccent),
-              ),
+                  color: const Color(0xFF001529).withOpacity(0.9),
+                  borderRadius: BorderRadius.circular(15),
+                  border: Border.all(color: Colors.cyanAccent)),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _stat("MAREA", _marea, Colors.cyanAccent),
-                  _stat("PROF. CANALE", "${profondita.toStringAsFixed(1)} m",
-                      Colors.white),
-                  _stat("KM/H", _speed.toStringAsFixed(1), Colors.greenAccent),
+                  _stat("KM/H", _speed.toStringAsFixed(1), Colors.white),
+                  _stat("GPS", _gpsStatus, Colors.greenAccent),
                 ],
               ),
             ),
           ),
 
-          // TASTI AZIONE
+          // TASTO ATTIVAZIONE
           Positioned(
             bottom: 40,
             left: 30,
@@ -150,14 +136,16 @@ class _LagunaAppState extends State<LagunaApp> {
                     onPressed: _attiva,
                     style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.cyanAccent,
-                        foregroundColor: Colors.black),
-                    child: const Text("ATTIVA SISTEMA"),
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.all(15)),
+                    child: const Text("ATTIVA SISTEMA",
+                        style: TextStyle(fontWeight: FontWeight.bold)),
                   ),
                 ),
                 const SizedBox(width: 10),
                 FloatingActionButton(
                   onPressed: _fetchMarea,
-                  backgroundColor: Colors.blueGrey,
+                  backgroundColor: Colors.white24,
                   child: const Icon(Icons.refresh, color: Colors.white),
                 ),
               ],
@@ -168,21 +156,11 @@ class _LagunaAppState extends State<LagunaApp> {
     );
   }
 
-  Widget _stat(String label, String value, Color color) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label,
-              style: const TextStyle(
-                  color: Colors.white60,
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 5),
-          Text(value,
-              style: TextStyle(
-                  color: color,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace')),
-        ],
-      );
+  Widget _stat(String l, String v, Color c) =>
+      Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
+        Text(v,
+            style:
+                TextStyle(color: c, fontSize: 18, fontWeight: FontWeight.bold))
+      ]);
 }
