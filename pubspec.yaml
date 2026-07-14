@@ -1,0 +1,42 @@
+name: laguna_app
+description: "App per la navigazione nella laguna di Venezia"
+publish_to: 'none'
+
+# Versione dell'applicazione
+version: 1.0.0+1
+
+# Specifica la versione di Dart richiesta
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Icone predefinite per iOS
+  cupertino_icons: ^1.0.6
+
+  # Motore per la visualizzazione della mappa
+  flutter_map: ^6.1.0
+
+  # Gestione delle coordinate geografiche (Latitudine/Longitudine)
+  latlong2: ^0.9.1
+
+  # Accesso al GPS e calcolo della velocità
+  geolocator: ^10.1.0
+
+  # Connessione internet per scaricare i dati delle maree
+  http: ^1.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  # Abilita l'uso dei componenti grafici Material Design
+  uses-material-design: true
+
+  # Registrazione del file GeoJSON dei canali
+  assets:
+    - assets/canali.json
