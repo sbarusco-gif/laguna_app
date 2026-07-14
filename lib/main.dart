@@ -16,53 +16,57 @@ class LagunaApp extends StatefulWidget {
 
 class _LagunaAppState extends State<LagunaApp> {
   String _marea = "---";
-  String _gpsStatus = "Pronto";
+  String _gpsStatus = "Premi ATTIVA";
   double _speed = 0.0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA PROFESSIONALE ---
+  // --- LOGICA MAREA "ULTRA-BYPASS" ---
   Future<void> _fetchMarea() async {
     setState(() => _marea = "Sync...");
-    // URL ufficiale del Comune di Venezia (Punta della Salute)
-    const String target =
-        "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
 
-    // Proviamo i due proxy più affidabili al mondo per le Web App
-    final List<String> proxyList = [
-      "https://api.allorigins.win/get?url=",
-      "https://corsproxy.io/?"
-    ];
+    // Indirizzo del Comune + Timestamp per evitare che GitHub usi la cache vecchia
+    final String target =
+        "https://portale.comune.venezia.it/marea/esporta-dati?id=1&t=${DateTime.now().millisecondsSinceEpoch}";
 
-    for (var proxy in proxyList) {
-      try {
-        final res =
-            await http.get(Uri.parse(proxy + Uri.encodeComponent(target)));
-        if (res.statusCode == 200) {
-          var jsonData;
-          // Se AllOrigins, il JSON è dentro 'contents'
-          if (proxy.contains("allorigins")) {
-            jsonData = json.decode(json.decode(res.body)['contents']);
-          } else {
-            // Se CorsProxy, il JSON è diretto
-            jsonData = json.decode(res.body);
-          }
+    // Usiamo AllOrigins in modalità RAW (è la più potente per saltare il blocco CORS)
+    final String proxyUrl =
+        "https://api.allorigins.win/raw?url=${Uri.encodeComponent(target)}";
 
-          if (jsonData != null && jsonData is List && jsonData.isNotEmpty) {
-            setState(() {
-              _marea = "${jsonData[0]['valore']} cm";
-            });
-            return; // Uscita vittoriosa
-          }
+    try {
+      final res = await http.get(Uri.parse(proxyUrl));
+      if (res.statusCode == 200) {
+        final List data = json.decode(res.body);
+        if (data.isNotEmpty) {
+          setState(() {
+            _marea = "${data[0]['valore']} cm";
+          });
+          return;
         }
-      } catch (e) {
-        debugPrint("Tentativo fallito con $proxy");
       }
+      setState(() => _marea = "Riprovando...");
+      _fetchMareaAlternative(); // Se il primo fallisce, prova il secondo automaticamente
+    } catch (e) {
+      _fetchMareaAlternative();
     }
-    setState(() => _marea = "CORS Error");
   }
 
-  Future<void> _attivaGps() async {
+  // Secondo proxy di emergenza
+  Future<void> _fetchMareaAlternative() async {
+    final String target =
+        "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
+    final String proxyUrl =
+        "https://corsproxy.io/?" + Uri.encodeComponent(target);
+    try {
+      final res = await http.get(Uri.parse(proxyUrl));
+      final List data = json.decode(res.body);
+      setState(() => _marea = "${data[0]['valore']} cm");
+    } catch (e) {
+      setState(() => _marea = "Offline");
+    }
+  }
+
+  Future<void> _attivaSistema() async {
     _fetchMarea();
     LocationPermission permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.always ||
@@ -84,7 +88,7 @@ class _LagunaAppState extends State<LagunaApp> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF000A12),
+      backgroundColor: Colors.black,
       body: Stack(
         children: [
           FlutterMap(
@@ -110,7 +114,7 @@ class _LagunaAppState extends State<LagunaApp> {
             ],
           ),
 
-          // DASHBOARD
+          // DASHBOARD PROFESSIONALE
           Positioned(
             top: 50,
             left: 10,
@@ -135,21 +139,16 @@ class _LagunaAppState extends State<LagunaApp> {
             ),
           ),
 
-          // BOTTONE CENTRALE DI ATTIVAZIONE
           if (_gpsStatus != "OK")
             Center(
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.anchor, size: 30),
-                label: const Text("ATTIVA NAVIGATORE",
-                    style: TextStyle(fontSize: 18)),
-                onPressed: _attivaGps,
+                label: const Text("ATTIVA NAVIGATORE"),
+                onPressed: _attivaSistema,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.cyanAccent,
                   foregroundColor: Colors.black,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 30, vertical: 20),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30)),
+                  padding: const EdgeInsets.all(20),
                 ),
               ),
             ),
@@ -166,7 +165,6 @@ class _LagunaAppState extends State<LagunaApp> {
                   color: Colors.white60,
                   fontSize: 10,
                   fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
           Text(value,
               style: TextStyle(
                   color: color,
