@@ -16,27 +16,31 @@ class LagunaApp extends StatefulWidget {
 
 class _LagunaAppState extends State<LagunaApp> {
   String _marea = "---";
-  String _gpsStatus = "Premi ATTIVA";
+  String _gpsStatus = "Attesa";
   double _speed = 0.0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA "ULTRA-BYPASS" ---
+  // --- LOGICA MAREA "SMART-TEXT" ---
   Future<void> _fetchMarea() async {
     setState(() => _marea = "Sync...");
-
-    // Indirizzo del Comune + Timestamp per evitare che GitHub usi la cache vecchia
     final String target =
-        "https://portale.comune.venezia.it/marea/esporta-dati?id=1&t=${DateTime.now().millisecondsSinceEpoch}";
+        "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
 
-    // Usiamo AllOrigins in modalità RAW (è la più potente per saltare il blocco CORS)
+    // Usiamo il ponte AllOrigins ma chiediamo il dato come 'contents' grezzo
     final String proxyUrl =
-        "https://api.allorigins.win/raw?url=${Uri.encodeComponent(target)}";
+        "https://api.allorigins.win/get?url=${Uri.encodeComponent(target)}";
 
     try {
       final res = await http.get(Uri.parse(proxyUrl));
       if (res.statusCode == 200) {
-        final List data = json.decode(res.body);
+        // AllOrigins restituisce un oggetto con una stringa 'contents'
+        final Map<String, dynamic> wrapped = json.decode(res.body);
+        final String contents = wrapped['contents'];
+
+        // Decodifichiamo la stringa interna che contiene il vero JSON della marea
+        final List<dynamic> data = json.decode(contents);
+
         if (data.isNotEmpty) {
           setState(() {
             _marea = "${data[0]['valore']} cm";
@@ -45,14 +49,14 @@ class _LagunaAppState extends State<LagunaApp> {
         }
       }
       setState(() => _marea = "Riprovando...");
-      _fetchMareaAlternative(); // Se il primo fallisce, prova il secondo automaticamente
+      _fetchAlternative();
     } catch (e) {
-      _fetchMareaAlternative();
+      _fetchAlternative();
     }
   }
 
-  // Secondo proxy di emergenza
-  Future<void> _fetchMareaAlternative() async {
+  // Secondo tentativo con proxy diverso se il primo fallisce
+  Future<void> _fetchAlternative() async {
     final String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
     final String proxyUrl =
@@ -62,11 +66,11 @@ class _LagunaAppState extends State<LagunaApp> {
       final List data = json.decode(res.body);
       setState(() => _marea = "${data[0]['valore']} cm");
     } catch (e) {
-      setState(() => _marea = "Offline");
+      setState(() => _marea = "CORS Locked");
     }
   }
 
-  Future<void> _attivaSistema() async {
+  Future<void> _attiva() async {
     _fetchMarea();
     LocationPermission permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.always ||
@@ -79,7 +83,7 @@ class _LagunaAppState extends State<LagunaApp> {
         setState(() {
           _pos = LatLng(p.latitude, p.longitude);
           _speed = p.speed * 3.6;
-          _mapController.move(_pos, _mapController.camera.zoom);
+          _mapController.move(_pos, 15);
         });
       });
     }
@@ -88,7 +92,7 @@ class _LagunaAppState extends State<LagunaApp> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFF000A12),
       body: Stack(
         children: [
           FlutterMap(
@@ -113,8 +117,6 @@ class _LagunaAppState extends State<LagunaApp> {
               ]),
             ],
           ),
-
-          // DASHBOARD PROFESSIONALE
           Positioned(
             top: 50,
             left: 10,
@@ -124,31 +126,31 @@ class _LagunaAppState extends State<LagunaApp> {
               decoration: BoxDecoration(
                 color: const Color(0xFF001529).withOpacity(0.9),
                 borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: Colors.cyanAccent, width: 1.5),
+                border: Border.all(color: Colors.cyanAccent),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _stat("MAREA", _marea, Colors.cyanAccent),
-                  _stat("NODI", (_speed / 1.852).toStringAsFixed(1),
-                      Colors.white),
+                  _stat("KM/H", _speed.toStringAsFixed(1), Colors.white),
                   _stat("GPS", _gpsStatus,
                       _gpsStatus == "OK" ? Colors.greenAccent : Colors.orange),
                 ],
               ),
             ),
           ),
-
           if (_gpsStatus != "OK")
             Center(
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.anchor, size: 30),
-                label: const Text("ATTIVA NAVIGATORE"),
-                onPressed: _attivaSistema,
+                label: const Text("ATTIVA SISTEMA"),
+                onPressed: _attiva,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.cyanAccent,
                   foregroundColor: Colors.black,
                   padding: const EdgeInsets.all(20),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30)),
                 ),
               ),
             ),
