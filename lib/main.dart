@@ -15,44 +15,71 @@ class LagunaApp extends StatefulWidget {
 }
 
 class _LagunaAppState extends State<LagunaApp> {
-  String _marea = "Richiesta...";
-  String _mareaLog = "Inizializzazione sistema...";
+  String _marea = "---";
+  int _mareaCm = 40; // Valore numerico per calcoli
   String _gpsStatus = "Attesa";
   double _speed = 0.0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA CON DIAGNOSTICA ---
+  // --- LOGICA MAREA "GHOST" (Tenta 3 proxy diversi) ---
   Future<void> _fetchMarea() async {
-    setState(() => _mareaLog = "Chiamata al proxy...");
+    setState(() => _marea = "Sync...");
     const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-    // Usiamo AllOrigins in modalità RAW (il metodo più potente per il web)
-    final String proxyUrl =
-        "https://api.allorigins.win/raw?url=${Uri.encodeComponent(target)}";
 
-    try {
-      final res = await http
-          .get(Uri.parse(proxyUrl))
-          .timeout(const Duration(seconds: 10));
+    // Lista Proxy in ordine di potenza
+    final List<String> proxies = [
+      "https://api.codetabs.com/v1/proxy?quest=",
+      "https://api.allorigins.win/get?url=",
+      "https://corsproxy.io/?"
+    ];
 
-      if (res.statusCode == 200) {
-        final List data = json.decode(res.body);
-        String valoreGrezzo = data[0]['valore'].toString();
-        setState(() {
-          _marea = "${valoreGrezzo.replaceAll('+', '')} cm";
-          _mareaLog = "Dato ricevuto con successo!";
-        });
-      } else {
-        setState(() => _mareaLog = "Errore Server: ${res.statusCode}");
+    for (var proxy in proxies) {
+      try {
+        final res = await http
+            .get(Uri.parse(proxy + Uri.encodeComponent(target)))
+            .timeout(const Duration(seconds: 5));
+        if (res.statusCode == 200) {
+          var data;
+          if (proxy.contains("allorigins")) {
+            data = json.decode(json.decode(res.body)['contents']);
+          } else {
+            data = json.decode(res.body);
+          }
+          setState(() {
+            _mareaCm =
+                int.parse(data[0]['valore'].toString().replaceAll('+', ''));
+            _marea = "$_mareaCm cm";
+          });
+          return;
+        }
+      } catch (e) {
+        print("Fallito proxy: $proxy");
       }
-    } catch (e) {
-      setState(() {
-        _mareaLog = "Blocco Browser (CORS/Network)";
-        _marea = "45 cm (Fix)";
-      });
-      print(e);
     }
+    setState(() => _marea = "$_mareaCm cm (Man)");
+  }
+
+  // Permette all'utente di regolare la marea a mano se internet fallisce
+  void _regolaMareaManualmente() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Imposta Marea Manuale"),
+        content: TextField(
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(hintText: "Esempio: 50"),
+          onSubmitted: (val) {
+            setState(() {
+              _mareaCm = int.parse(val);
+              _marea = "$_mareaCm cm (Man)";
+            });
+            Navigator.pop(context);
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _attiva() async {
@@ -62,19 +89,22 @@ class _LagunaAppState extends State<LagunaApp> {
       setState(() => _gpsStatus = "OK");
       Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.bestForNavigation),
+            accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 2),
       ).listen((Position pos) {
         setState(() {
           _pos = LatLng(pos.latitude, pos.longitude);
           _speed = pos.speed * 3.6;
-          _mapController.move(_pos, 15);
         });
+        _mapController.move(_pos, 15);
       });
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Profondità calcolata: 12 metri (Canale Giudecca) + marea
+    double profondita = 12.0 + (_mareaCm / 100);
+
     return Scaffold(
       backgroundColor: const Color(0xFF000A12),
       body: Stack(
@@ -114,46 +144,58 @@ class _LagunaAppState extends State<LagunaApp> {
                 borderRadius: BorderRadius.circular(15),
                 border: Border.all(color: Colors.cyanAccent),
               ),
-              child: Column(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _stat("MAREA", _marea, Colors.cyanAccent),
-                      _stat("KM/H", _speed.toStringAsFixed(1), Colors.white),
-                      _stat("GPS", _gpsStatus, Colors.greenAccent),
-                    ],
+                  GestureDetector(
+                    onTap: _regolaMareaManualmente,
+                    child: _stat("MAREA", _marea, Colors.cyanAccent),
                   ),
-                  const Divider(color: Colors.white10, height: 20),
-                  Text("LOG MAREA: $_mareaLog",
-                      style:
-                          const TextStyle(color: Colors.white30, fontSize: 8)),
+                  _stat("PROF.", "${profondita.toStringAsFixed(1)}m",
+                      Colors.white),
+                  _stat("KM/H", _speed.toStringAsFixed(1), Colors.greenAccent),
                 ],
               ),
             ),
           ),
 
-          if (_gpsStatus == "Attesa")
+          if (_gpsStatus != "OK")
             Center(
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.anchor),
-                label: const Text("ATTIVA SISTEMA"),
+                label: const Text("ATTIVA NAVIGATORE"),
                 onPressed: _attiva,
                 style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.cyanAccent,
                     foregroundColor: Colors.black,
                     padding: const EdgeInsets.all(20)),
               ),
-            )
+            ),
+
+          Positioned(
+            bottom: 30,
+            right: 20,
+            child: FloatingActionButton(
+              backgroundColor: Colors.blueGrey,
+              onPressed: _fetchMarea,
+              child: const Icon(Icons.refresh, color: Colors.white),
+            ),
+          )
         ],
       ),
     );
   }
 
-  Widget _stat(String l, String v, Color c) => Column(children: [
-        Text(l, style: const TextStyle(color: Colors.white60, fontSize: 10)),
-        Text(v,
-            style:
-                TextStyle(color: c, fontSize: 18, fontWeight: FontWeight.bold))
-      ]);
+  Widget _stat(String l, String v, Color c) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
+          Text(v,
+              style: TextStyle(
+                  color: c,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'monospace')),
+        ],
+      );
 }
