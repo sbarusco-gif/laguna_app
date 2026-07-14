@@ -15,9 +15,9 @@ class LagunaApp extends StatefulWidget {
 }
 
 class _LagunaAppState extends State<LagunaApp> {
-  String _marea = "---";
+  String _marea = "Richiesta...";
   String _gpsStatus = "GPS Spento";
-  LatLng _pos = const LatLng(45.4371, 12.3326); // Piazza San Marco
+  LatLng _pos = const LatLng(45.4371, 12.3326); // San Marco
   final MapController _mapController = MapController();
 
   @override
@@ -26,25 +26,36 @@ class _LagunaAppState extends State<LagunaApp> {
     _fetchMarea();
   }
 
-  // --- SOLUZIONE MAREA (Proxy alternativo) ---
+  // --- SOLUZIONE MAREA (Nuovo Proxy) ---
   Future<void> _fetchMarea() async {
     try {
-      // Usiamo un proxy diverso per il Web
-      final url = Uri.parse(
-          'https://api.codetabs.com/v1/proxy?quest=https://portale.comune.venezia.it/marea/esporta-dati?id=1');
+      // Usiamo corsproxy.io che è più pulito per il Web
+      final url = Uri.parse('https://corsproxy.io/?' +
+          Uri.encodeComponent(
+              'https://portale.comune.venezia.it/marea/esporta-dati?id=1'));
       final res = await http.get(url);
+
       if (res.statusCode == 200) {
-        final data = json.decode(res.body);
+        final List data = json.decode(res.body);
         setState(() => _marea = "${data[0]['valore']} cm");
+      } else {
+        setState(() => _marea = "Errore ${res.statusCode}");
       }
     } catch (e) {
-      setState(() => _marea = "Errore Marea");
+      setState(() => _marea = "Errore CORS");
+      print(e);
     }
   }
 
-  // --- SOLUZIONE GPS (Richiede interazione utente) ---
+  // --- SOLUZIONE GPS (Richiede interazione) ---
   Future<void> _attivaGps() async {
-    setState(() => _gpsStatus = "Ricerca segnale...");
+    setState(() => _gpsStatus = "Ricerca...");
+
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() => _gpsStatus = "Attiva GPS nel tel");
+      return;
+    }
 
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
@@ -53,18 +64,24 @@ class _LagunaAppState extends State<LagunaApp> {
 
     if (permission == LocationPermission.always ||
         permission == LocationPermission.whileInUse) {
+      Position position = await Geolocator.getCurrentPosition();
+      setState(() {
+        _pos = LatLng(position.latitude, position.longitude);
+        _gpsStatus = "OK";
+        _mapController.move(_pos, 15);
+      });
+
+      // Avvia lo streaming continuo
       Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
             accuracy: LocationAccuracy.bestForNavigation),
-      ).listen((Position position) {
+      ).listen((pos) {
         setState(() {
-          _pos = LatLng(position.latitude, position.longitude);
-          _gpsStatus = "GPS Attivo";
-          _mapController.move(_pos, 15);
+          _pos = LatLng(pos.latitude, pos.longitude);
         });
       });
     } else {
-      setState(() => _gpsStatus = "Permesso negato");
+      setState(() => _gpsStatus = "Permesso Negato");
     }
   }
 
@@ -80,7 +97,6 @@ class _LagunaAppState extends State<LagunaApp> {
               TileLayer(
                   urlTemplate:
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
-              // LIVELLO NAUTICO
               TileLayer(
                 urlTemplate:
                     'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
@@ -95,8 +111,6 @@ class _LagunaAppState extends State<LagunaApp> {
               ]),
             ],
           ),
-
-          // DASHBOARD
           Positioned(
             top: 50,
             left: 20,
@@ -109,24 +123,23 @@ class _LagunaAppState extends State<LagunaApp> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _box("MAREA", _marea),
-                  _box("GPS", _gpsStatus),
+                  _col("MAREA", _marea),
+                  _col("GPS", _gpsStatus),
                 ],
               ),
             ),
           ),
-
-          // PULSANTE ATTIVAZIONE (Necessario per sbloccare il browser)
           Positioned(
             bottom: 40,
             left: 50,
             right: 50,
             child: ElevatedButton.icon(
               icon: const Icon(Icons.gps_fixed),
-              label: const Text("ATTIVA NAVIGAZIONE"),
-              style:
-                  ElevatedButton.styleFrom(padding: const EdgeInsets.all(15)),
-              onPressed: _attivaGps,
+              label: const Text("ATTIVA GPS E MAREA"),
+              onPressed: () {
+                _attivaGps();
+                _fetchMarea();
+              },
             ),
           )
         ],
@@ -134,7 +147,7 @@ class _LagunaAppState extends State<LagunaApp> {
     );
   }
 
-  Widget _box(String t, String v) => Column(children: [
+  Widget _col(String t, String v) => Column(children: [
         Text(t, style: const TextStyle(color: Colors.white70, fontSize: 10)),
         Text(v,
             style: const TextStyle(
