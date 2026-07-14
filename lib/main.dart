@@ -21,42 +21,49 @@ class _LagunaAppState extends State<LagunaApp> {
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA CON MULTI-PROXY (Per battere il blocco CORS) ---
+  // --- LOGICA MAREA PROFESSIONALE ---
   Future<void> _fetchMarea() async {
-    setState(() => _marea = "...");
-    final String target =
+    setState(() => _marea = "Sync...");
+    // URL ufficiale del Comune di Venezia (Punta della Salute)
+    const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
 
-    // Lista di ponti (proxy) per aggirare il blocco del browser
-    final List<String> proxies = [
+    // Proviamo i due proxy più affidabili al mondo per le Web App
+    final List<String> proxyList = [
       "https://api.allorigins.win/get?url=",
-      "https://corsproxy.io/?",
-      "https://api.codetabs.com/v1/proxy?quest="
+      "https://corsproxy.io/?"
     ];
 
-    for (var proxy in proxies) {
+    for (var proxy in proxyList) {
       try {
         final res =
             await http.get(Uri.parse(proxy + Uri.encodeComponent(target)));
         if (res.statusCode == 200) {
-          var data;
+          var jsonData;
+          // Se AllOrigins, il JSON è dentro 'contents'
           if (proxy.contains("allorigins")) {
-            data = json.decode(json.decode(res.body)['contents']);
+            jsonData = json.decode(json.decode(res.body)['contents']);
           } else {
-            data = json.decode(res.body);
+            // Se CorsProxy, il JSON è diretto
+            jsonData = json.decode(res.body);
           }
-          setState(() => _marea = "${data[0]['valore']} cm");
-          return; // Uscita se successo
+
+          if (jsonData != null && jsonData is List && jsonData.isNotEmpty) {
+            setState(() {
+              _marea = "${jsonData[0]['valore']} cm";
+            });
+            return; // Uscita vittoriosa
+          }
         }
       } catch (e) {
-        print("Proxy fallito: $proxy");
+        debugPrint("Tentativo fallito con $proxy");
       }
     }
-    setState(() => _marea = "Dato Protetto");
+    setState(() => _marea = "CORS Error");
   }
 
   Future<void> _attivaGps() async {
-    _fetchMarea(); // Prova a caricare la marea al click
+    _fetchMarea();
     LocationPermission permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.always ||
         permission == LocationPermission.whileInUse) {
@@ -98,65 +105,74 @@ class _LagunaAppState extends State<LagunaApp> {
                     width: 60,
                     height: 60,
                     child: const Icon(Icons.navigation,
-                        color: Colors.red, size: 40))
+                        color: Colors.red, size: 45))
               ]),
             ],
           ),
 
-          // DASHBOARD SUPERIORE
+          // DASHBOARD
           Positioned(
             top: 50,
-            left: 15,
-            right: 15,
+            left: 10,
+            right: 10,
             child: Container(
               padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(
                 color: const Color(0xFF001529).withOpacity(0.9),
                 borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: Colors.cyanAccent),
+                border: Border.all(color: Colors.cyanAccent, width: 1.5),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _stat("MAREA", _marea, Colors.cyanAccent),
-                  _stat("VELOCITÀ", "${_speed.toStringAsFixed(1)} km/h",
+                  _stat("NODI", (_speed / 1.852).toStringAsFixed(1),
                       Colors.white),
-                  _stat(
-                      "GPS",
-                      _gpsStatus,
-                      _gpsStatus == "OK"
-                          ? Colors.greenAccent
-                          : Colors.redAccent),
+                  _stat("GPS", _gpsStatus,
+                      _gpsStatus == "OK" ? Colors.greenAccent : Colors.orange),
                 ],
               ),
             ),
           ),
 
-          // TASTONE ATTIVAZIONE
-          Positioned(
-            bottom: 40,
-            left: 50,
-            right: 50,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.anchor),
-              label: const Text("ATTIVA SISTEMA"),
-              onPressed: _attivaGps,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.cyanAccent,
-                foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(vertical: 20),
+          // BOTTONE CENTRALE DI ATTIVAZIONE
+          if (_gpsStatus != "OK")
+            Center(
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.anchor, size: 30),
+                label: const Text("ATTIVA NAVIGATORE",
+                    style: TextStyle(fontSize: 18)),
+                onPressed: _attivaGps,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.cyanAccent,
+                  foregroundColor: Colors.black,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 30, vertical: 20),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30)),
+                ),
               ),
             ),
-          )
         ],
       ),
     );
   }
 
-  Widget _stat(String label, String value, Color color) => Column(children: [
-        Text(label, style: const TextStyle(color: Colors.white60, fontSize: 9)),
-        Text(value,
-            style: TextStyle(
-                color: color, fontSize: 16, fontWeight: FontWeight.bold))
-      ]);
+  Widget _stat(String label, String value, Color color) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(value,
+              style: TextStyle(
+                  color: color,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'monospace')),
+        ],
+      );
 }
