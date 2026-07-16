@@ -1,5 +1,5 @@
 name: laguna_app
-description: "Navigatore Laguna Venezia con Tracking"
+description: "Navigatore Laguna Venezia con Bussola"
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -14,8 +14,9 @@ dependencies:
   flutter_map: ^6.1.0
   latlong2: ^0.9.1
 
-  # GPS E RETE
+  # SENSORI E RETE
   geolocator: ^10.1.0
+  flutter_compass: ^0.8.0
   http: ^1.1.0
 
   # ICONE

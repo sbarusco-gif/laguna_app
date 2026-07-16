@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:math' as math;
 
 void main() => runApp(
     const MaterialApp(home: LagunaApp(), debugShowCheckedModeBanner: false));
@@ -17,21 +19,33 @@ class LagunaApp extends StatefulWidget {
 class _LagunaAppState extends State<LagunaApp> {
   String _marea = "40 cm (S)";
   int _mareaCm = 40;
-  Color _statusColor = Colors.orangeAccent; // Arancio = Fallback
+  Color _statusColor = Colors.orangeAccent;
   double _speed = 0.0;
   double _totalDist = 0.0;
+  double _heading = 0.0; // Gradi della bussola
   LatLng _pos = const LatLng(45.4371, 12.3326);
   List<LatLng> _trail = [];
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA "GHOST PROXY" ---
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  // --- LOGICA BUSSOLA ---
+  void _initCompass() {
+    FlutterCompass.events?.listen((event) {
+      setState(() {
+        _heading = event.heading ?? 0;
+      });
+    });
+  }
+
   Future<void> _fetchMarea() async {
     const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-    // Proviamo il proxy RAW (il più trasparente possibile)
     final String proxy =
         "https://api.allorigins.win/raw?url=${Uri.encodeComponent(target)}";
-
     try {
       final res =
           await http.get(Uri.parse(proxy)).timeout(const Duration(seconds: 6));
@@ -41,42 +55,40 @@ class _LagunaAppState extends State<LagunaApp> {
           _mareaCm =
               int.parse(data[0]['valore'].toString().replaceAll('+', ''));
           _marea = "$_mareaCm cm (A)";
-          _statusColor = Colors.cyanAccent; // BLU = AUTOMATICO OK
+          _statusColor = Colors.cyanAccent;
         });
       }
     } catch (e) {
-      debugPrint("Auto-fetch fallito, resta in manuale/fallback");
+      debugPrint("Marea auto fallita");
     }
   }
 
   void _regolaManuale() {
-    TextEditingController customController = TextEditingController();
+    TextEditingController ctl = TextEditingController();
     showDialog(
         context: context,
         builder: (c) => AlertDialog(
-              title: const Text("Inserisci Marea Reale"),
+              title: const Text("Marea Manuale"),
               content: TextField(
-                  controller: customController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(hintText: "Centimetri")),
+                  controller: ctl, keyboardType: TextInputType.number),
               actions: [
                 TextButton(
                     onPressed: () {
                       setState(() {
-                        _mareaCm = int.parse(customController.text);
+                        _mareaCm = int.parse(ctl.text);
                         _marea = "$_mareaCm cm (M)";
-                        _statusColor =
-                            Colors.yellowAccent; // GIALLO = MANUALE OK
+                        _statusColor = Colors.yellowAccent;
                       });
                       Navigator.pop(c);
                     },
-                    child: const Text("IMPOSTA"))
+                    child: const Text("OK"))
               ],
             ));
   }
 
   void _attiva() async {
     _fetchMarea();
+    _initCompass(); // Attiva sensori bussola
     LocationPermission p = await Geolocator.requestPermission();
     if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
       Geolocator.getPositionStream(
@@ -120,16 +132,23 @@ class _LagunaAppState extends State<LagunaApp> {
                 Polyline(
                     points: _trail, strokeWidth: 4, color: Colors.redAccent)
               ]),
+              // Freccia posizione ruotabile con la bussola
               MarkerLayer(markers: [
                 Marker(
-                    point: _pos,
-                    width: 60,
-                    height: 60,
+                  point: _pos,
+                  width: 60,
+                  height: 60,
+                  child: Transform.rotate(
+                    angle: (_heading * (math.pi / 180) * -1),
                     child: const Icon(Icons.navigation,
-                        color: Colors.blue, size: 45))
+                        color: Colors.blue, size: 45),
+                  ),
+                )
               ]),
             ],
           ),
+
+          // DASHBOARD
           Positioned(
             top: 50,
             left: 10,
@@ -152,25 +171,56 @@ class _LagunaAppState extends State<LagunaApp> {
               ),
             ),
           ),
+
+          // --- BUSSOLA VISIVA (In basso a sinistra) ---
+          Positioned(
+            bottom: 30,
+            left: 20,
+            child: Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white24, width: 2),
+              ),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  const Text("N",
+                      style: TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12)),
+                  Transform.rotate(
+                    angle: (_heading * (math.pi / 180) * -1),
+                    child: const Icon(Icons.explore,
+                        color: Colors.white, size: 60),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
           if (_trail.isEmpty)
             Center(
                 child: ElevatedButton.icon(
                     icon: const Icon(Icons.anchor),
-                    label: const Text("ATTIVA NAVIGAZIONE"),
+                    label: const Text("ATTIVA"),
                     onPressed: _attiva,
                     style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.cyanAccent,
                         foregroundColor: Colors.black,
                         padding: const EdgeInsets.all(20)))),
-          // DISTANZA IN BASSO
+
+          // DISTANZA
           Positioned(
               bottom: 30,
-              left: 20,
+              right: 20,
               child: Container(
                   padding: const EdgeInsets.all(8),
                   color: Colors.black87,
-                  child: Text(
-                      "DISTANZA: ${(_totalDist / 1000).toStringAsFixed(2)} KM",
+                  child: Text("${(_totalDist / 1000).toStringAsFixed(2)} KM",
                       style: const TextStyle(
                           color: Colors.white,
                           fontSize: 10,
