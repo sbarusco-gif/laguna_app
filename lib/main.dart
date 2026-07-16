@@ -15,79 +15,63 @@ class LagunaApp extends StatefulWidget {
 }
 
 class _LagunaAppState extends State<LagunaApp> {
-  String _marea = "---";
-  int _mareaCm = 0;
-  bool _isLive = false;
+  String _marea = "40 cm (S)";
+  int _mareaCm = 40;
+  Color _statusColor = Colors.orangeAccent; // Arancio = Fallback
   double _speed = 0.0;
   double _totalDist = 0.0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
   List<LatLng> _trail = [];
   final MapController _mapController = MapController();
 
-  // --- LOGICA MAREA DEFINITIVA (Tunnel Pro) ---
+  // --- LOGICA MAREA "GHOST PROXY" ---
   Future<void> _fetchMarea() async {
-    setState(() {
-      _marea = "...";
-      _isLive = false;
-    });
-    const String api =
+    const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-
-    // Proviamo CorsProxy.io che è basato su Cloudflare (molto stabile)
-    final String proxy = "https://corsproxy.io/?" + Uri.encodeComponent(api);
+    // Proviamo il proxy RAW (il più trasparente possibile)
+    final String proxy =
+        "https://api.allorigins.win/raw?url=${Uri.encodeComponent(target)}";
 
     try {
       final res =
-          await http.get(Uri.parse(proxy)).timeout(const Duration(seconds: 8));
+          await http.get(Uri.parse(proxy)).timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final List data = json.decode(res.body);
-        if (data.isNotEmpty) {
-          String valStr =
-              data[0]['valore'].toString().replaceAll('+', '').trim();
-          setState(() {
-            _mareaCm = int.parse(valStr);
-            _marea = "$_mareaCm cm";
-            _isLive = true; // DIVENTA AZZURRO SE REALE
-          });
-          return;
-        }
+        setState(() {
+          _mareaCm =
+              int.parse(data[0]['valore'].toString().replaceAll('+', ''));
+          _marea = "$_mareaCm cm (A)";
+          _statusColor = Colors.cyanAccent; // BLU = AUTOMATICO OK
+        });
       }
     } catch (e) {
-      print("Errore T1: $e");
-    }
-
-    // Se fallisce, tenta il secondo tunnel
-    try {
-      final res2 = await http.get(Uri.parse(
-          "https://api.codetabs.com/v1/proxy?quest=" +
-              Uri.encodeComponent(api)));
-      final List data2 = json.decode(res2.body);
-      setState(() {
-        _mareaCm =
-            int.parse(data2[0]['valore'].toString().replaceAll('+', '').trim());
-        _marea = "$_mareaCm cm";
-        _isLive = true;
-      });
-    } catch (e) {
-      setState(() => _marea = "38 cm (S)"); // Resta Arancione (Simulato)
+      debugPrint("Auto-fetch fallito, resta in manuale/fallback");
     }
   }
 
   void _regolaManuale() {
+    TextEditingController customController = TextEditingController();
     showDialog(
         context: context,
         builder: (c) => AlertDialog(
-              title: const Text("Marea Manuale"),
+              title: const Text("Inserisci Marea Reale"),
               content: TextField(
+                  controller: customController,
                   keyboardType: TextInputType.number,
-                  onSubmitted: (v) {
-                    setState(() {
-                      _mareaCm = int.parse(v);
-                      _marea = "$_mareaCm cm (M)";
-                      _isLive = true;
-                    });
-                    Navigator.pop(c);
-                  }),
+                  decoration: const InputDecoration(hintText: "Centimetri")),
+              actions: [
+                TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _mareaCm = int.parse(customController.text);
+                        _marea = "$_mareaCm cm (M)";
+                        _statusColor =
+                            Colors.yellowAccent; // GIALLO = MANUALE OK
+                      });
+                      Navigator.pop(c);
+                    },
+                    child: const Text("IMPOSTA"))
+              ],
             ));
   }
 
@@ -155,19 +139,15 @@ class _LagunaAppState extends State<LagunaApp> {
               decoration: BoxDecoration(
                   color: const Color(0xFF001529).withOpacity(0.9),
                   borderRadius: BorderRadius.circular(15),
-                  border: Border.all(
-                      color: _isLive ? Colors.cyanAccent : Colors.orangeAccent,
-                      width: 2)),
+                  border: Border.all(color: _statusColor, width: 2)),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   GestureDetector(
                       onTap: _regolaManuale,
-                      child: _stat("MAREA", _marea,
-                          _isLive ? Colors.cyanAccent : Colors.orangeAccent)),
+                      child: _stat("MAREA", _marea, _statusColor)),
                   _stat("PROF.", "${prof.toStringAsFixed(1)}m", Colors.white),
-                  _stat("DIST.", "${(_totalDist / 1000).toStringAsFixed(2)}km",
-                      Colors.greenAccent),
+                  _stat("KM/H", _speed.toStringAsFixed(1), Colors.greenAccent),
                 ],
               ),
             ),
@@ -176,20 +156,25 @@ class _LagunaAppState extends State<LagunaApp> {
             Center(
                 child: ElevatedButton.icon(
                     icon: const Icon(Icons.anchor),
-                    label: const Text("ATTIVA"),
+                    label: const Text("ATTIVA NAVIGAZIONE"),
                     onPressed: _attiva,
                     style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.cyanAccent,
                         foregroundColor: Colors.black,
                         padding: const EdgeInsets.all(20)))),
+          // DISTANZA IN BASSO
           Positioned(
               bottom: 30,
-              right: 20,
-              child: FloatingActionButton(
-                  mini: true,
-                  backgroundColor: Colors.white24,
-                  onPressed: _fetchMarea,
-                  child: const Icon(Icons.refresh, color: Colors.white)))
+              left: 20,
+              child: Container(
+                  padding: const EdgeInsets.all(8),
+                  color: Colors.black87,
+                  child: Text(
+                      "DISTANZA: ${(_totalDist / 1000).toStringAsFixed(2)} KM",
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold))))
         ],
       ),
     );
