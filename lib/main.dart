@@ -16,7 +16,7 @@ class LagunaApp extends StatefulWidget {
 }
 
 class _LagunaAppState extends State<LagunaApp> {
-  String _mareaText = "---";
+  String _mareaText = "40 cm (S)";
   int _cmMarea = 40;
   double _speed = 0.0;
   double _heading = 0.0;
@@ -24,54 +24,49 @@ class _LagunaAppState extends State<LagunaApp> {
   final MapController _mapController = MapController();
   bool _isActive = false;
 
-  // --- MOTORE MAREA RESILIENTE (Tenta 3 Proxy diversi) ---
-  Future<void> _fetchMareaResiliente() async {
+  // --- LOGICA MAREA "RAW BYPASS" ---
+  Future<void> _fetchMareaLive() async {
+    setState(() => _mareaText = "...");
+    // URL originale e Proxy AllOrigins in modalità RAW (senza filtri)
     const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-    final List<String> proxies = [
-      "https://api.allorigins.win/get?url=",
-      "https://corsproxy.io/?",
-      "https://api.codetabs.com/v1/proxy?quest="
-    ];
+    final String proxyUrl =
+        "https://api.allorigins.win/raw?url=${Uri.encodeComponent(target)}";
 
-    for (var proxy in proxies) {
-      try {
-        final res = await http
-            .get(Uri.parse(proxy + Uri.encodeComponent(target)))
-            .timeout(const Duration(seconds: 5));
-        if (res.statusCode == 200) {
-          var data;
-          if (proxy.contains("allorigins")) {
-            data = json.decode(json.decode(res.body)['contents']);
-          } else {
-            data = json.decode(res.body);
-          }
+    try {
+      final res = await http
+          .get(Uri.parse(proxyUrl))
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode == 200) {
+        // Leggiamo la risposta come testo puro
+        final List data = json.decode(res.body);
+        if (data.isNotEmpty) {
           setState(() {
             _cmMarea =
                 int.parse(data[0]['valore'].toString().replaceAll('+', ''));
-            _mareaText = "$_cmMarea cm (L)"; // L = Live (Reale)
+            _mareaText = "$_cmMarea cm (L)"; // L = Live (Reale!)
           });
-          return; // Successo, esce dal ciclo
+          return;
         }
-      } catch (e) {
-        debugPrint("Proxy fallito: $proxy");
       }
+    } catch (e) {
+      debugPrint("Errore: $e");
     }
-    setState(() =>
-        _mareaText = "$_cmMarea cm (S)"); // Resta simulato se tutti falliscono
+    setState(
+        () => _mareaText = "$_cmMarea cm (S)"); // Resta in simulato se fallisce
   }
 
   // --- LOGICA PROFONDITÀ ---
   double _getDepth(LatLng p) {
     double base = 1.2;
     if (p.latitude < 45.433 && p.latitude > 45.425)
-      base = 12.0; // Giudecca
-    else if (p.latitude > 45.450) base = 4.0; // Murano
+      base = 12.0; // Canale Giudecca
+    else if (p.latitude > 45.450) base = 4.0; // Murano/Burano
     return base + (_cmMarea / 100);
   }
 
-  void _attivaSistema() async {
-    _fetchMareaResiliente();
+  Future<void> _attiva() async {
+    _fetchMareaLive();
     LocationPermission p = await Geolocator.requestPermission();
     if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
       setState(() => _isActive = true);
@@ -83,8 +78,7 @@ class _LagunaAppState extends State<LagunaApp> {
         setState(() {
           _pos = LatLng(pos.latitude, pos.longitude);
           _speed = pos.speed * 3.6;
-          // La bussola GPS si attiva solo se la barca si muove (> 1.5 km/h)
-          if (_speed > 1.5) _heading = pos.heading;
+          if (_speed > 1.5) _heading = pos.heading; // COG (Course Over Ground)
         });
         _mapController.move(_pos, 15);
       });
@@ -96,7 +90,7 @@ class _LagunaAppState extends State<LagunaApp> {
     double prof = _getDepth(_pos);
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFF000A12),
       body: Stack(
         children: [
           FlutterMap(
@@ -106,10 +100,12 @@ class _LagunaAppState extends State<LagunaApp> {
               TileLayer(
                   urlTemplate:
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
+              // LIVELLO NAUTICO (Briccole e segnalamenti)
               TileLayer(
-                  urlTemplate:
-                      'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
-                  backgroundColor: Colors.transparent),
+                urlTemplate:
+                    'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
+                backgroundColor: Colors.transparent,
+              ),
               MarkerLayer(markers: [
                 Marker(
                   point: _pos,
@@ -118,20 +114,20 @@ class _LagunaAppState extends State<LagunaApp> {
                   child: Transform.rotate(
                     angle: (_heading * (math.pi / 180)),
                     child: const Icon(Icons.navigation,
-                        color: Colors.red, size: 45),
+                        color: Colors.blue, size: 45),
                   ),
                 )
               ]),
             ],
           ),
 
-          // DASHBOARD PROFESSIONALE (4 VALORI)
+          // DASHBOARD (Alta visibilità)
           Positioned(
-            top: 40,
+            top: 50,
             left: 10,
             right: 10,
             child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 15),
+              padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(
                 color: const Color(0xFF001529).withOpacity(0.9),
                 borderRadius: BorderRadius.circular(15),
@@ -142,19 +138,18 @@ class _LagunaAppState extends State<LagunaApp> {
                     width: 2),
               ),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _stat("MAREA", _mareaText, Colors.cyanAccent),
                   _stat("PROF.", "${prof.toStringAsFixed(1)}m", Colors.white),
                   _stat("ROTTA", "${_heading.toInt()}°", Colors.orangeAccent),
-                  _stat("VEL.", "${_speed.toStringAsFixed(1)}k",
-                      Colors.greenAccent),
+                  _stat("KM/H", _speed.toStringAsFixed(1), Colors.greenAccent),
                 ],
               ),
             ),
           ),
 
-          // BUSSOLA ANALOGICA (Ruota col movimento)
+          // BUSSOLA VISIVA
           Positioned(
             bottom: 30,
             left: 20,
@@ -175,33 +170,43 @@ class _LagunaAppState extends State<LagunaApp> {
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.anchor, size: 30),
                 label: const Text("ATTIVA SISTEMA"),
-                onPressed: _attivaSistema,
+                onPressed: _attiva,
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.cyanAccent,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.all(20)),
+                  backgroundColor: Colors.cyanAccent,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.all(25),
+                ),
               ),
             ),
+
+          // TASTO SYNC MANUALE (In caso di S)
+          Positioned(
+            bottom: 30,
+            right: 20,
+            child: FloatingActionButton(
+              mini: true,
+              backgroundColor: Colors.white24,
+              child: const Icon(Icons.refresh, color: Colors.white),
+              onPressed: _fetchMareaLive,
+            ),
+          )
         ],
       ),
     );
   }
 
-  Widget _stat(String l, String v, Color c) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(l,
-              style: const TextStyle(
-                  color: Colors.white60,
-                  fontSize: 8,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 5),
-          Text(v,
-              style: TextStyle(
-                  color: c,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace')),
-        ],
-      );
+  Widget _stat(String l, String v, Color c) => Column(children: [
+        Text(l,
+            style: const TextStyle(
+                color: Colors.white60,
+                fontSize: 8,
+                fontWeight: FontWeight.bold)),
+        const SizedBox(height: 5),
+        Text(v,
+            style: TextStyle(
+                color: c,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                fontFamily: 'monospace')),
+      ]);
 }
