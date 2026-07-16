@@ -16,71 +16,94 @@ class LagunaApp extends StatefulWidget {
 }
 
 class _LagunaAppState extends State<LagunaApp> {
-  String _mareaText = "40 cm (S)";
-  int _cmMarea = 40;
+  String _mareaDisplay = "40 cm (S)";
+  int _mareaCm = 40;
+  bool _isLive = false;
   double _speed = 0.0;
   double _heading = 0.0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
-  bool _isActive = false;
+  bool _active = false;
 
-  // --- LOGICA MAREA "RAW BYPASS" ---
-  Future<void> _fetchMareaLive() async {
-    setState(() => _mareaText = "...");
-    // URL originale e Proxy AllOrigins in modalità RAW (senza filtri)
+  // --- LOGICA MAREA "LAST ATTEMPT" ---
+  Future<void> _fetchMarea() async {
     const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-    final String proxyUrl =
-        "https://api.allorigins.win/raw?url=${Uri.encodeComponent(target)}";
+    // Proxy alternativo ultra-veloce
+    final String proxy = "https://api.codetabs.com/v1/proxy?quest=" +
+        Uri.encodeComponent(target);
 
     try {
-      final res = await http
-          .get(Uri.parse(proxyUrl))
-          .timeout(const Duration(seconds: 8));
+      final res =
+          await http.get(Uri.parse(proxy)).timeout(const Duration(seconds: 5));
       if (res.statusCode == 200) {
-        // Leggiamo la risposta come testo puro
         final List data = json.decode(res.body);
-        if (data.isNotEmpty) {
-          setState(() {
-            _cmMarea =
-                int.parse(data[0]['valore'].toString().replaceAll('+', ''));
-            _mareaText = "$_cmMarea cm (L)"; // L = Live (Reale!)
-          });
-          return;
-        }
+        setState(() {
+          _mareaCm =
+              int.parse(data[0]['valore'].toString().replaceAll('+', ''));
+          _mareaDisplay = "$_mareaCm cm (L)";
+          _isLive = true;
+        });
       }
     } catch (e) {
-      debugPrint("Errore: $e");
+      debugPrint("CORS Block active");
     }
-    setState(
-        () => _mareaText = "$_cmMarea cm (S)"); // Resta in simulato se fallisce
   }
 
-  // --- LOGICA PROFONDITÀ ---
+  // --- IMPOSTAZIONE MANUALE (Per i piloti veri) ---
+  void _setMareaManuale() {
+    TextEditingController _txt = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Aggiorna Marea"),
+        content: TextField(
+          controller: _txt,
+          keyboardType: TextInputType.number,
+          decoration:
+              const InputDecoration(hintText: "Inserisci cm attuali (es. 45)"),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () {
+                setState(() {
+                  _mareaCm = int.parse(_txt.text);
+                  _mareaDisplay = "$_mareaCm cm (M)";
+                  _isLive = true; // Diventa azzurro
+                });
+                Navigator.pop(context);
+              },
+              child: const Text("IMPOSTA")),
+        ],
+      ),
+    );
+  }
+
+  // --- CALCOLO PROFONDITÀ ---
   double _getDepth(LatLng p) {
-    double base = 1.2;
+    double base = 1.2; // Default secche
     if (p.latitude < 45.433 && p.latitude > 45.425)
-      base = 12.0; // Canale Giudecca
-    else if (p.latitude > 45.450) base = 4.0; // Murano/Burano
-    return base + (_cmMarea / 100);
+      base = 12.0; // Giudecca
+    else if (p.latitude > 45.450) base = 4.0; // Murano
+    return base + (_mareaCm / 100);
   }
 
-  Future<void> _attiva() async {
-    _fetchMareaLive();
+  void _avvia() async {
+    _fetchMarea();
     LocationPermission p = await Geolocator.requestPermission();
     if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
-      setState(() => _isActive = true);
+      setState(() => _active = true);
       Geolocator.getPositionStream(
               locationSettings: const LocationSettings(
                   accuracy: LocationAccuracy.bestForNavigation,
                   distanceFilter: 2))
-          .listen((Position pos) {
+          .listen((pos) {
         setState(() {
           _pos = LatLng(pos.latitude, pos.longitude);
           _speed = pos.speed * 3.6;
-          if (_speed > 1.5) _heading = pos.heading; // COG (Course Over Ground)
+          if (_speed > 1.8) _heading = pos.heading;
         });
-        _mapController.move(_pos, 15);
+        _mapController.move(_pos, 15.5);
       });
     }
   }
@@ -88,9 +111,10 @@ class _LagunaAppState extends State<LagunaApp> {
   @override
   Widget build(BuildContext context) {
     double prof = _getDepth(_pos);
+    bool alarm = prof < 1.8;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF000A12),
+      backgroundColor: Colors.black,
       body: Stack(
         children: [
           FlutterMap(
@@ -100,12 +124,10 @@ class _LagunaAppState extends State<LagunaApp> {
               TileLayer(
                   urlTemplate:
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
-              // LIVELLO NAUTICO (Briccole e segnalamenti)
               TileLayer(
-                urlTemplate:
-                    'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
-                backgroundColor: Colors.transparent,
-              ),
+                  urlTemplate:
+                      'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
+                  backgroundColor: Colors.transparent),
               MarkerLayer(markers: [
                 Marker(
                   point: _pos,
@@ -121,9 +143,9 @@ class _LagunaAppState extends State<LagunaApp> {
             ],
           ),
 
-          // DASHBOARD (Alta visibilità)
+          // DASHBOARD HI-TECH
           Positioned(
-            top: 50,
+            top: 40,
             left: 10,
             right: 10,
             child: Container(
@@ -132,16 +154,19 @@ class _LagunaAppState extends State<LagunaApp> {
                 color: const Color(0xFF001529).withOpacity(0.9),
                 borderRadius: BorderRadius.circular(15),
                 border: Border.all(
-                    color: _mareaText.contains("(L)")
-                        ? Colors.cyanAccent
-                        : Colors.orangeAccent,
+                    color: _isLive ? Colors.cyanAccent : Colors.orangeAccent,
                     width: 2),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _stat("MAREA", _mareaText, Colors.cyanAccent),
-                  _stat("PROF.", "${prof.toStringAsFixed(1)}m", Colors.white),
+                  GestureDetector(
+                    onTap: _setMareaManuale,
+                    child: _stat("MAREA", _mareaDisplay,
+                        _isLive ? Colors.cyanAccent : Colors.orangeAccent),
+                  ),
+                  _stat("PROF.", "${prof.toStringAsFixed(1)}m",
+                      alarm ? Colors.red : Colors.white),
                   _stat("ROTTA", "${_heading.toInt()}°", Colors.orangeAccent),
                   _stat("KM/H", _speed.toStringAsFixed(1), Colors.greenAccent),
                 ],
@@ -149,28 +174,31 @@ class _LagunaAppState extends State<LagunaApp> {
             ),
           ),
 
-          // BUSSOLA VISIVA
+          // BUSSOLA ROTANTE
           Positioned(
             bottom: 30,
             left: 20,
             child: Container(
-              width: 70,
-              height: 70,
-              decoration: const BoxDecoration(
-                  color: Colors.black54, shape: BoxShape.circle),
+              width: 75,
+              height: 75,
+              decoration: BoxDecoration(
+                  color: Colors.black87,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white24)),
               child: Transform.rotate(
                 angle: (_heading * (math.pi / 180) * -1),
-                child: const Icon(Icons.explore, color: Colors.white, size: 50),
+                child: const Icon(Icons.explore, color: Colors.white, size: 55),
               ),
             ),
           ),
 
-          if (!_isActive)
+          if (!_active)
             Center(
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.anchor, size: 30),
-                label: const Text("ATTIVA SISTEMA"),
-                onPressed: _attiva,
+                label: const Text("ATTIVA SISTEMA",
+                    style: TextStyle(fontSize: 18)),
+                onPressed: _avvia,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.cyanAccent,
                   foregroundColor: Colors.black,
@@ -179,7 +207,7 @@ class _LagunaAppState extends State<LagunaApp> {
               ),
             ),
 
-          // TASTO SYNC MANUALE (In caso di S)
+          // REFRESH RAPIDO
           Positioned(
             bottom: 30,
             right: 20,
@@ -187,7 +215,7 @@ class _LagunaAppState extends State<LagunaApp> {
               mini: true,
               backgroundColor: Colors.white24,
               child: const Icon(Icons.refresh, color: Colors.white),
-              onPressed: _fetchMareaLive,
+              onPressed: _fetchMarea,
             ),
           )
         ],
