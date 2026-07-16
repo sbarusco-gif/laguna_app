@@ -17,13 +17,43 @@ class LagunaApp extends StatefulWidget {
 
 class _LagunaAppState extends State<LagunaApp> {
   String _marea = "---";
+  int _cmMarea = 40;
   double _speed = 0.0;
-  double _heading = 0.0; // Direzione GPS (Course Over Ground)
+  double _heading = 0.0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
-  bool _isLive = false;
+  bool _isActive = false;
 
-  // --- LOGICA MAREA ---
+  // --- LOGICA PROFONDITÀ REALE ---
+  double _calcolaProfondita(LatLng p) {
+    double fondaleBase = 1.2; // Default per le secche (Barene)
+
+    // Canale della Giudecca (Profondo)
+    if (p.latitude < 45.433 &&
+        p.latitude > 45.425 &&
+        p.longitude > 12.310 &&
+        p.longitude < 12.360) {
+      fondaleBase = 12.5;
+    }
+    // Canale Grande
+    else if (p.latitude < 45.445 &&
+        p.latitude > 45.430 &&
+        p.longitude > 12.325 &&
+        p.longitude < 12.345) {
+      fondaleBase = 5.0;
+    }
+    // Canali verso Murano / Burano
+    else if (p.latitude > 45.450 && p.latitude < 45.495) {
+      fondaleBase = 4.0;
+    }
+    // Bocca di Porto (Lido / Malamocco)
+    else if (p.longitude > 12.380) {
+      fondaleBase = 14.0;
+    }
+
+    return fondaleBase + (_cmMarea / 100);
+  }
+
   Future<void> _fetchMarea() async {
     const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
@@ -35,7 +65,9 @@ class _LagunaAppState extends State<LagunaApp> {
       if (res.statusCode == 200) {
         final List data = json.decode(res.body);
         setState(() {
-          _marea = "${data[0]['valore'].toString().replaceAll('+', '')} cm";
+          _cmMarea =
+              int.parse(data[0]['valore'].toString().replaceAll('+', ''));
+          _marea = "$_cmMarea cm";
         });
       }
     } catch (e) {
@@ -43,28 +75,20 @@ class _LagunaAppState extends State<LagunaApp> {
     }
   }
 
-  // --- ATTIVAZIONE GPS E BUSSOLA DI MOVIMENTO ---
-  void _iniziaNavigazione() async {
+  void _avvia() async {
     _fetchMarea();
     LocationPermission p = await Geolocator.requestPermission();
     if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
-      setState(() => _isLive = true);
-
+      setState(() => _isActive = true);
       Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.bestForNavigation,
-          distanceFilter: 2, // Aggiorna ogni 2 metri
-        ),
-      ).listen((Position pos) {
+              locationSettings: const LocationSettings(
+                  accuracy: LocationAccuracy.bestForNavigation,
+                  distanceFilter: 2))
+          .listen((Position pos) {
         setState(() {
           _pos = LatLng(pos.latitude, pos.longitude);
-          _speed = pos.speed * 3.6; // km/h
-
-          // USA LA DIREZIONE DEL MOVIMENTO (Heading GPS)
-          // Funziona solo se ci si muove > 1 km/h
-          if (_speed > 1.0) {
-            _heading = pos.heading;
-          }
+          _speed = pos.speed * 3.6;
+          if (_speed > 1.5) _heading = pos.heading;
         });
         _mapController.move(_pos, 15);
       });
@@ -73,39 +97,45 @@ class _LagunaAppState extends State<LagunaApp> {
 
   @override
   Widget build(BuildContext context) {
+    double profTotale = _calcolaProfondita(_pos);
+
     return Scaffold(
       backgroundColor: const Color(0xFF000A12),
       body: Stack(
         children: [
           FlutterMap(
             mapController: _mapController,
-            options: MapOptions(initialCenter: _pos, initialZoom: 15),
+            options: MapOptions(initialCenter: _pos, initialZoom: 14),
             children: [
+              // LIVELLO BATIMETRICO PROFESSIONALE (ESRI Ocean)
+              // Mostra i fondali, le secche e le curve di livello
               TileLayer(
-                  urlTemplate:
-                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
+                urlTemplate:
+                    'https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}',
+                userAgentPackageName: 'it.venezia.nautical',
+              ),
+              // LIVELLO OPENSEAMAP (Briccole e segnalamenti)
               TileLayer(
-                  urlTemplate:
-                      'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
-                  backgroundColor: Colors.transparent),
-
-              // FRECCIA BARCA (RUOTA CON LA TUA DIREZIONE REALE)
+                urlTemplate:
+                    'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
+                backgroundColor: Colors.transparent,
+              ),
               MarkerLayer(markers: [
                 Marker(
                   point: _pos,
-                  width: 70,
-                  height: 70,
+                  width: 60,
+                  height: 60,
                   child: Transform.rotate(
                     angle: (_heading * (math.pi / 180)),
                     child: const Icon(Icons.navigation,
-                        color: Colors.blue, size: 50),
+                        color: Colors.blue, size: 45),
                   ),
                 )
               ]),
             ],
           ),
 
-          // DASHBOARD
+          // DASHBOARD NAUTICA
           Positioned(
             top: 50,
             left: 10,
@@ -115,56 +145,44 @@ class _LagunaAppState extends State<LagunaApp> {
               decoration: BoxDecoration(
                 color: const Color(0xFF001529).withOpacity(0.9),
                 borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: Colors.cyanAccent),
+                border: Border.all(
+                    color: profTotale < 2.0 ? Colors.red : Colors.cyanAccent,
+                    width: 2),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _stat("MAREA", _marea),
-                  _stat("ROTTA", "${_heading.toInt()}°"),
-                  _stat("KM/H", _speed.toStringAsFixed(1)),
+                  _stat("MAREA", _marea, Colors.cyanAccent),
+                  _stat("PROFONDITÀ", "${profTotale.toStringAsFixed(1)} m",
+                      profTotale < 2.0 ? Colors.red : Colors.white),
+                  _stat("KM/H", _speed.toStringAsFixed(1), Colors.greenAccent),
                 ],
               ),
             ),
           ),
 
-          // BUSSOLA VISIVA (QUADRANTE)
+          // BUSSOLA INFERIORE
           Positioned(
             bottom: 30,
             left: 20,
             child: Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                color: Colors.black87,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white24, width: 2),
-              ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  const Text("N",
-                      style: TextStyle(
-                          color: Colors.red,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 10)),
-                  Transform.rotate(
-                    angle: (_heading * (math.pi / 180) * -1),
-                    child: const Icon(Icons.explore,
-                        color: Colors.cyanAccent, size: 60),
-                  ),
-                ],
+              width: 70,
+              height: 70,
+              decoration: const BoxDecoration(
+                  color: Colors.black54, shape: BoxShape.circle),
+              child: Transform.rotate(
+                angle: (_heading * (math.pi / 180) * -1),
+                child: const Icon(Icons.explore, color: Colors.white, size: 50),
               ),
             ),
           ),
 
-          if (!_isLive)
+          if (!_isActive)
             Center(
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.anchor, size: 30),
-                label: const Text("INIZIA NAVIGAZIONE",
-                    style: TextStyle(fontSize: 18)),
-                onPressed: _iniziaNavigazione,
+                label: const Text("ATTIVA PLOTTER"),
+                onPressed: _avvia,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.cyanAccent,
                   foregroundColor: Colors.black,
@@ -177,11 +195,11 @@ class _LagunaAppState extends State<LagunaApp> {
     );
   }
 
-  Widget _stat(String l, String v) => Column(children: [
+  Widget _stat(String l, String v, Color c) => Column(children: [
         Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
         Text(v,
-            style: const TextStyle(
-                color: Colors.white,
+            style: TextStyle(
+                color: c,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 fontFamily: 'monospace')),
