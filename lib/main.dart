@@ -15,44 +15,54 @@ class LagunaApp extends StatefulWidget {
 }
 
 class _LagunaAppState extends State<LagunaApp> {
-  String _marea = "---";
-  int _mareaCm = 40;
+  String _marea = "Sincro...";
+  int _mareaCm = 0;
+  bool _isLive = false; // Per sapere se il dato è vero o simulato
   double _speed = 0.0;
   double _totalDistance = 0.0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
-  List<LatLng> _breadcrumb = []; // Memorizza la scia rossa
+  List<LatLng> _breadcrumb = [];
   final MapController _mapController = MapController();
 
-  // --- STIMA PROFONDITÀ ---
-  double _getDepth(LatLng pos) {
-    double fondaleBase = 1.2;
-    if (pos.latitude < 45.435 && pos.latitude > 45.425)
-      fondaleBase = 12.0;
-    else if (pos.latitude > 45.445 && pos.latitude < 45.460) fondaleBase = 5.0;
-    return fondaleBase + (_mareaCm / 100);
-  }
-
+  // --- RECUPERO MAREA CON CACHE-BUSTER ---
   Future<void> _fetchMarea() async {
-    const String target =
-        "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-    final String proxyUrl = "https://api.codetabs.com/v1/proxy?quest=" +
-        Uri.encodeComponent(target);
+    setState(() => _marea = "...");
+
+    // Generiamo un numero unico basato sul tempo per forzare il refresh totale
+    final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+    final String target =
+        "https://portale.comune.venezia.it/marea/esporta-dati?id=1&t=$timestamp";
+    final String proxyUrl =
+        "https://api.allorigins.win/get?url=${Uri.encodeComponent(target)}";
+
     try {
       final res = await http.get(Uri.parse(proxyUrl));
       if (res.statusCode == 200) {
-        final List data = json.decode(res.body);
-        setState(() {
-          _mareaCm =
-              int.parse(data[0]['valore'].toString().replaceAll('+', ''));
-          _marea = "$_mareaCm cm";
-        });
+        final wrapped = json.decode(res.body);
+        final List data = json.decode(wrapped['contents']);
+
+        if (data.isNotEmpty) {
+          setState(() {
+            _mareaCm =
+                int.parse(data[0]['valore'].toString().replaceAll('+', ''));
+            _marea = "$_mareaCm cm";
+            _isLive = true; // DATO REALE!
+          });
+          return;
+        }
       }
     } catch (e) {
-      setState(() => _marea = "40 cm");
+      debugPrint("Errore: $e");
     }
+
+    // Se arriva qui, il download è fallito
+    setState(() {
+      _marea = "No Link";
+      _isLive = false;
+    });
   }
 
-  void _attivaNavigazione() async {
+  void _attivaSistema() async {
     _fetchMarea();
     LocationPermission p = await Geolocator.requestPermission();
     if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
@@ -68,7 +78,7 @@ class _LagunaAppState extends State<LagunaApp> {
           }
           _pos = newPoint;
           _speed = pos.speed * 3.6;
-          _breadcrumb.add(_pos); // Aggiunge punto al percorso
+          _breadcrumb.add(_pos);
         });
         _mapController.move(_pos, _mapController.camera.zoom);
       });
@@ -77,7 +87,7 @@ class _LagunaAppState extends State<LagunaApp> {
 
   @override
   Widget build(BuildContext context) {
-    double profondita = _getDepth(_pos);
+    double profondita = 12.0 + (_mareaCm / 100);
 
     return Scaffold(
       backgroundColor: const Color(0xFF000A12),
@@ -86,7 +96,7 @@ class _LagunaAppState extends State<LagunaApp> {
           FlutterMap(
             mapController: _mapController,
             options: const MapOptions(
-                initialCenter: LatLng(45.4371, 12.3326), initialZoom: 14),
+                initialCenter: LatLng(45.4371, 12.3326), initialZoom: 15),
             children: [
               TileLayer(
                   urlTemplate:
@@ -95,26 +105,20 @@ class _LagunaAppState extends State<LagunaApp> {
                   urlTemplate:
                       'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
                   backgroundColor: Colors.transparent),
-
-              // DISEGNO DELLA SCIA (Solo se abbiamo almeno 2 punti)
               if (_breadcrumb.length > 1)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
+                PolylineLayer(polylines: [
+                  Polyline(
                       points: _breadcrumb,
                       strokeWidth: 4,
-                      color: Colors.red,
-                    ),
-                  ],
-                ),
-
+                      color: Colors.redAccent)
+                ]),
               MarkerLayer(markers: [
                 Marker(
                     point: _pos,
                     width: 60,
                     height: 60,
                     child: const Icon(Icons.navigation,
-                        color: Colors.blue, size: 40))
+                        color: Colors.blue, size: 45))
               ]),
             ],
           ),
@@ -130,19 +134,19 @@ class _LagunaAppState extends State<LagunaApp> {
                 color: const Color(0xFF001529).withOpacity(0.9),
                 borderRadius: BorderRadius.circular(15),
                 border: Border.all(
-                    color: profondita < 2.0 ? Colors.red : Colors.cyanAccent),
+                    color: _isLive ? Colors.cyanAccent : Colors.orangeAccent),
               ),
-              child: Column(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _stat("MAREA", _marea),
-                      _stat("PROF.", "${profondita.toStringAsFixed(1)}m"),
-                      _stat("DISTANZA",
-                          "${(_totalDistance / 1000).toStringAsFixed(2)} km"),
-                    ],
-                  ),
+                  _stat("MAREA", _marea,
+                      _isLive ? Colors.cyanAccent : Colors.orangeAccent),
+                  _stat("PROF.", "${profondita.toStringAsFixed(1)}m",
+                      Colors.white),
+                  _stat(
+                      "DISTANZA",
+                      "${(_totalDistance / 1000).toStringAsFixed(2)} km",
+                      Colors.greenAccent),
                 ],
               ),
             ),
@@ -151,24 +155,36 @@ class _LagunaAppState extends State<LagunaApp> {
           if (_breadcrumb.isEmpty)
             Center(
               child: ElevatedButton.icon(
-                icon: const Icon(Icons.play_arrow),
-                label: const Text("INIZIA TRACKING"),
-                onPressed: _attivaNavigazione,
+                icon: const Icon(Icons.anchor),
+                label: const Text("AVVIA NAVIGAZIONE"),
+                onPressed: _attivaSistema,
                 style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.cyanAccent,
                     foregroundColor: Colors.black,
                     padding: const EdgeInsets.all(20)),
               ),
-            )
+            ),
+
+          // REFRESH FORZATO
+          Positioned(
+            bottom: 30,
+            right: 20,
+            child: FloatingActionButton(
+              mini: true,
+              backgroundColor: Colors.white24,
+              onPressed: _fetchMarea,
+              child: const Icon(Icons.refresh, color: Colors.white),
+            ),
+          )
         ],
       ),
     );
   }
 
-  Widget _stat(String l, String v) => Column(children: [
+  Widget _stat(String l, String v, Color c) => Column(children: [
         Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
         Text(v,
-            style: const TextStyle(
-                color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))
+            style:
+                TextStyle(color: c, fontSize: 18, fontWeight: FontWeight.bold))
       ]);
 }
