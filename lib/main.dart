@@ -23,78 +23,99 @@ class _LagunaAppState extends State<LagunaApp> {
   final MapController _mapController = MapController();
 
   // --- FUNZIONE PER CREARE ICONE ---
-  Marker _buildPoi(LatLng point, IconData icon, Color color, String name) {
+  Marker _buildPoi(LatLng point, Color color, String name, bool isFamous) {
     return Marker(
       point: point,
-      width: 40,
-      height: 40,
+      width: 45,
+      height: 45,
       child: GestureDetector(
-        onTap: () => _mostraNome(name),
+        onTap: () => _mostraInfo(name, isFamous),
         child: Container(
           decoration: BoxDecoration(
             color: Colors.white,
             shape: BoxShape.circle,
-            border: Border.all(color: color, width: 2),
+            border: Border.all(
+                color: isFamous ? color : Colors.orangeAccent, width: 3),
+            boxShadow: [const BoxShadow(color: Colors.black26, blurRadius: 4)],
           ),
-          child: Icon(icon, color: color, size: 20),
+          child: Icon(isFamous ? Icons.restaurant : Icons.set_meal,
+              color: isFamous ? color : Colors.orange[800], size: 22),
         ),
       ),
     );
   }
 
-  void _mostraNome(String name) {
+  void _mostraInfo(String name, bool isFamous) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(name, textAlign: TextAlign.center),
-      duration: const Duration(seconds: 2),
-      backgroundColor: Colors.blueGrey,
+      content: Text(
+        "${isFamous ? '🌟' : '⚓'} $name",
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+      duration: const Duration(seconds: 3),
+      backgroundColor: isFamous ? Colors.green[800] : Colors.orange[900],
     ));
   }
 
   List<Marker> get _allMarkers {
     return [
-      // --- DISTRIBUTORI (Arancio) ---
-      _buildPoi(const LatLng(45.4265, 12.3218), Icons.local_gas_station,
-          Colors.orange, "Benzina: Sacca Fisola"),
-      _buildPoi(const LatLng(45.4542, 12.3515), Icons.local_gas_station,
-          Colors.orange, "Benzina: Murano"),
-      _buildPoi(const LatLng(45.4855, 12.4165), Icons.local_gas_station,
-          Colors.orange, "Benzina: Burano"),
-      _buildPoi(const LatLng(45.2205, 12.2815), Icons.local_gas_station,
-          Colors.orange, "Benzina: Chioggia"),
+      // --- TRATTORIE E OSTERIE DELLE ISOLE ---
 
-      // --- RISTORANTI E TRATTORIE ISOLE (Verde) ---
-      // MURANO
-      _buildPoi(const LatLng(45.4582, 12.3520), Icons.restaurant, Colors.green,
-          "Trattoria Ai Frati (Murano)"),
-      _buildPoi(const LatLng(45.4545, 12.3565), Icons.restaurant, Colors.green,
-          "Osteria al Duomo (Murano)"),
-      // BURANO / MAZZORBO
-      _buildPoi(const LatLng(45.4854, 12.4172), Icons.restaurant, Colors.green,
-          "Trattoria al Gatto Nero (Burano)"),
-      _buildPoi(const LatLng(45.4842, 12.4120), Icons.restaurant, Colors.green,
-          "Venissa (Mazzorbo)"),
+      // LE VIGNOLE (Isola quasi sconosciuta ai turisti)
+      _buildPoi(const LatLng(45.4510, 12.3785), Colors.green,
+          "Trattoria alle Vignole (Solo barca)", false),
+
+      // SANT'ERASMO (L'orto di Venezia)
+      _buildPoi(const LatLng(45.4552, 12.4130), Colors.green,
+          "Trattoria da Tedeschi (Molto locale)", false),
+      _buildPoi(const LatLng(45.4480, 12.4050), Colors.green,
+          "I Sapori di S.Erasmo", false),
+
+      // MAZZORBO
+      _buildPoi(const LatLng(45.4851, 12.4110), Colors.green,
+          "Trattoria Maddalena (Autentica)", false),
+      _buildPoi(const LatLng(45.4842, 12.4120), Colors.green,
+          "Venissa (Stella Michelin)", true),
+
+      // BURANO
+      _buildPoi(const LatLng(45.4854, 12.4172), Colors.green,
+          "Trattoria al Gatto Nero", true),
+      _buildPoi(
+          const LatLng(45.4848, 12.4185), Colors.green, "Da Romano", true),
+      _buildPoi(const LatLng(45.4840, 12.4150), Colors.green,
+          "Trattoria da Primo", false),
+
       // TORCELLO
-      _buildPoi(const LatLng(45.4985, 12.4170), Icons.restaurant, Colors.green,
-          "Locanda Cipriani (Torcello)"),
-      _buildPoi(const LatLng(45.4975, 12.4160), Icons.restaurant, Colors.green,
-          "Taverna di Torcello"),
-      // SANT'ERASMO
-      _buildPoi(const LatLng(45.4560, 12.4125), Icons.restaurant, Colors.green,
-          "Il Lato Azzurro (S.Erasmo)"),
-      // MALAMOCCO / LIDO
-      _buildPoi(const LatLng(45.3715, 12.3395), Icons.restaurant, Colors.green,
-          "Trattoria da Scarso (Malamocco)"),
-      // PELLESTRINA
-      _buildPoi(const LatLng(45.2735, 12.2985), Icons.restaurant, Colors.green,
-          "Da Celeste (Pellestrina)"),
-      _buildPoi(const LatLng(45.3055, 12.3115), Icons.restaurant, Colors.green,
-          "Da Memo (S.Piero in Volta)"),
+      _buildPoi(const LatLng(45.4985, 12.4170), Colors.green,
+          "Locanda Cipriani", true),
+      _buildPoi(const LatLng(45.4970, 12.4165), Colors.green,
+          "Ponte del Diavolo", false),
 
-      // --- EMERGENZA (Rosso) ---
-      _buildPoi(const LatLng(45.4395, 12.3425), Icons.medical_services,
-          Colors.red, "Ospedale Civile Venezia"),
+      // MURANO
+      _buildPoi(const LatLng(45.4582, 12.3520), Colors.green,
+          "Trattoria Ai Frati", true),
+      _buildPoi(const LatLng(45.4545, 12.3565), Colors.green,
+          "Osteria al Duomo", false),
+      _buildPoi(const LatLng(45.4555, 12.3510), Colors.green,
+          "Trattoria Valmarana", false),
 
-      // BARCA (Blu)
+      // MALAMOCCO (Lido Sud)
+      _buildPoi(const LatLng(45.3715, 12.3395), Colors.green,
+          "Trattoria da Scarso", true),
+      _buildPoi(const LatLng(45.3710, 12.3390), Colors.green,
+          "Trattoria da Gino", false),
+
+      // PELLESTRINA / SAN PIETRO IN VOLTA
+      _buildPoi(const LatLng(45.3055, 12.3115), Colors.green,
+          "Da Memo (Specialità Pesce)", false),
+      _buildPoi(
+          const LatLng(45.3045, 12.3105), Colors.green, "Da Giani", false),
+      _buildPoi(const LatLng(45.2735, 12.2985), Colors.green,
+          "Da Celeste (Famoso)", true),
+      _buildPoi(const LatLng(45.2910, 12.3050), Colors.green,
+          "Agriturismo Le Valli (In mezzo alle valli)", false),
+
+      // POSIZIONE BARCA
       Marker(
           point: _pos,
           width: 60,
@@ -151,7 +172,7 @@ class _LagunaAppState extends State<LagunaApp> {
           FlutterMap(
             mapController: _mapController,
             options: const MapOptions(
-                initialCenter: LatLng(45.4600, 12.3600), initialZoom: 12.0),
+                initialCenter: LatLng(45.4500, 12.3800), initialZoom: 12.0),
             children: [
               TileLayer(
                   urlTemplate:
@@ -163,7 +184,6 @@ class _LagunaAppState extends State<LagunaApp> {
               MarkerLayer(markers: _allMarkers),
             ],
           ),
-          // DASHBOARD
           Positioned(
             top: 50,
             left: 10,
@@ -179,7 +199,7 @@ class _LagunaAppState extends State<LagunaApp> {
                 children: [
                   _stat("MAREA", _marea, Colors.cyanAccent),
                   _stat("KM/H", _speed.toStringAsFixed(1), Colors.white),
-                  _stat("GPS", _gpsStatus, Colors.greenAccent),
+                  _stat("GPS", _gpsStatus, Colors.greenAccent)
                 ],
               ),
             ),
@@ -188,7 +208,7 @@ class _LagunaAppState extends State<LagunaApp> {
             Center(
                 child: ElevatedButton.icon(
                     icon: const Icon(Icons.anchor),
-                    label: const Text("ATTIVA"),
+                    label: const Text("ATTIVA NAVIGATORE"),
                     onPressed: _attiva,
                     style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.cyanAccent,
