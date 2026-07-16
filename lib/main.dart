@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:flutter_compass/flutter_compass.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:math' as math;
@@ -20,46 +19,14 @@ class _LagunaAppState extends State<LagunaApp> {
   String _marea = "40 cm (S)";
   int _mareaCm = 40;
   double _speed = 0.0;
-  double _heading = 0.0; // Direzione finale
+  double _heading = 0.0; // Direzione rilevata dal movimento GPS
+  double _totalDist = 0.0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
+  List<LatLng> _trail = [];
   final MapController _mapController = MapController();
-  bool _isActive = false;
+  bool _isNavigating = false;
 
-  // --- ATTIVAZIONE SISTEMA ---
-  Future<void> _attivaSito() async {
-    // 1. Chiedi permessi GPS
-    LocationPermission p = await Geolocator.requestPermission();
-
-    if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
-      setState(() => _isActive = true);
-      _fetchMarea();
-
-      // 2. Ascolta Bussola Magnetica (se il browser lo permette)
-      FlutterCompass.events?.listen((event) {
-        if (event.heading != null) {
-          setState(() => _heading = event.heading!);
-        }
-      });
-
-      // 3. Ascolta GPS (Posizione, Velocità e Direzione di movimento)
-      Geolocator.getPositionStream(
-              locationSettings: const LocationSettings(
-                  accuracy: LocationAccuracy.bestForNavigation,
-                  distanceFilter: 2))
-          .listen((pos) {
-        setState(() {
-          _pos = LatLng(pos.latitude, pos.longitude);
-          _speed = pos.speed * 3.6;
-          // Se la bussola magnetica è ferma e stiamo andando a più di 2 km/h, usa la direzione GPS
-          if (_speed > 2.0 && pos.heading != 0) {
-            _heading = pos.heading;
-          }
-        });
-        _mapController.move(_pos, 15);
-      });
-    }
-  }
-
+  // --- LOGICA MAREA ---
   Future<void> _fetchMarea() async {
     const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
@@ -81,8 +48,38 @@ class _LagunaAppState extends State<LagunaApp> {
     }
   }
 
+  // --- ATTIVAZIONE GPS E ROTAZIONE ---
+  void _attivaNavigazione() async {
+    _fetchMarea();
+    LocationPermission p = await Geolocator.requestPermission();
+    if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
+      setState(() => _isNavigating = true);
+      Geolocator.getPositionStream(
+              locationSettings: const LocationSettings(
+                  accuracy: LocationAccuracy.bestForNavigation,
+                  distanceFilter: 2))
+          .listen((Position pos) {
+        setState(() {
+          if (_trail.isNotEmpty) {
+            _totalDist += Geolocator.distanceBetween(
+                _pos.latitude, _pos.longitude, pos.latitude, pos.longitude);
+          }
+          _pos = LatLng(pos.latitude, pos.longitude);
+          _speed = pos.speed * 3.6;
+
+          // LA BUSSOLA GPS: Ruota la freccia solo se ci stiamo muovendo
+          if (_speed > 1.5) {
+            _heading = pos.heading;
+          }
+        });
+        _mapController.move(_pos, 15);
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    double prof = 12.0 + (_mareaCm / 100);
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -98,15 +95,19 @@ class _LagunaAppState extends State<LagunaApp> {
                   urlTemplate:
                       'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
                   backgroundColor: Colors.transparent),
+              PolylineLayer(polylines: [
+                Polyline(
+                    points: _trail, strokeWidth: 4, color: Colors.redAccent)
+              ]),
               MarkerLayer(markers: [
                 Marker(
                   point: _pos,
                   width: 60,
                   height: 60,
                   child: Transform.rotate(
-                    angle: (_heading * (math.pi / 180) * -1),
+                    angle: (_heading * (math.pi / 180)),
                     child: const Icon(Icons.navigation,
-                        color: Colors.red, size: 50),
+                        color: Colors.blue, size: 45),
                   ),
                 )
               ]),
@@ -128,41 +129,53 @@ class _LagunaAppState extends State<LagunaApp> {
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _stat("MAREA", _marea),
-                  _stat("DIR.", "${_heading.toInt()}°"),
+                  _stat("PROF.", "${prof.toStringAsFixed(1)}m"),
                   _stat("KM/H", _speed.toStringAsFixed(1)),
                 ],
               ),
             ),
           ),
 
-          // BUSSOLA VISIVA (Ruota sempre)
+          // BUSSOLA VISIVA (Rotante)
           Positioned(
             bottom: 30,
             left: 20,
             child: Container(
-              width: 80,
-              height: 80,
-              decoration: const BoxDecoration(
-                  color: Colors.black45, shape: BoxShape.circle),
+              width: 70,
+              height: 70,
+              decoration: BoxDecoration(
+                  color: Colors.black87,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white24)),
               child: Transform.rotate(
                 angle: (_heading * (math.pi / 180) * -1),
-                child: const Icon(Icons.explore, color: Colors.white, size: 60),
+                child: const Icon(Icons.explore,
+                    color: Colors.cyanAccent, size: 50),
               ),
             ),
           ),
 
-          if (!_isActive)
+          if (!_isNavigating)
             Center(
               child: ElevatedButton.icon(
-                icon: const Icon(Icons.anchor),
-                label: const Text("ATTIVA NAVIGATORE"),
-                onPressed: _attivaSito,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text("INIZIA NAVIGAZIONE"),
+                onPressed: _attivaNavigazione,
                 style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.cyanAccent,
                     foregroundColor: Colors.black,
-                    padding: const EdgeInsets.all(25)),
+                    padding: const EdgeInsets.all(20)),
               ),
             ),
+
+          Positioned(
+              bottom: 20,
+              right: 20,
+              child: Text("${(_totalDist / 1000).toStringAsFixed(2)} KM",
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold))),
         ],
       ),
     );
@@ -171,7 +184,7 @@ class _LagunaAppState extends State<LagunaApp> {
   Widget _stat(String l, String v) => Column(children: [
         Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
         Text(v,
-            style: TextStyle(
-                color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))
+            style: const TextStyle(
+                color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold))
       ]);
 }
