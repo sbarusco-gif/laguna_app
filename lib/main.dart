@@ -16,66 +16,54 @@ class LagunaApp extends StatefulWidget {
 }
 
 class _LagunaAppState extends State<LagunaApp> {
-  String _marea = "---";
-  int _cmMarea = 40;
+  String _mareaText = "---";
+  int _cmMarea = 0;
   double _speed = 0.0;
   double _heading = 0.0;
   LatLng _pos = const LatLng(45.4371, 12.3326);
   final MapController _mapController = MapController();
   bool _isActive = false;
 
-  // --- LOGICA PROFONDITÀ REALE ---
-  double _calcolaProfondita(LatLng p) {
-    double fondaleBase = 1.2; // Default per le secche (Barene)
-
-    // Canale della Giudecca (Profondo)
+  // --- LOGICA PROFONDITÀ DINAMICA ---
+  double _getDepth(LatLng p) {
+    double base = 1.2; // Secche
+    // Canale della Giudecca
     if (p.latitude < 45.433 &&
         p.latitude > 45.425 &&
         p.longitude > 12.310 &&
-        p.longitude < 12.360) {
-      fondaleBase = 12.5;
-    }
+        p.longitude < 12.365)
+      base = 12.0;
     // Canale Grande
     else if (p.latitude < 45.445 &&
-        p.latitude > 45.430 &&
+        p.latitude > 45.432 &&
         p.longitude > 12.325 &&
-        p.longitude < 12.345) {
-      fondaleBase = 5.0;
-    }
-    // Canali verso Murano / Burano
-    else if (p.latitude > 45.450 && p.latitude < 45.495) {
-      fondaleBase = 4.0;
-    }
-    // Bocca di Porto (Lido / Malamocco)
-    else if (p.longitude > 12.380) {
-      fondaleBase = 14.0;
-    }
+        p.longitude < 12.348)
+      base = 5.0;
+    // Murano/Burano
+    else if (p.latitude > 45.450) base = 4.0;
 
-    return fondaleBase + (_cmMarea / 100);
+    return base + (_cmMarea / 100);
   }
 
   Future<void> _fetchMarea() async {
     const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
     final String proxy =
-        "https://api.allorigins.win/raw?url=${Uri.encodeComponent(target)}";
+        "https://api.allorigins.win/get?url=${Uri.encodeComponent(target)}";
     try {
       final res =
           await http.get(Uri.parse(proxy)).timeout(const Duration(seconds: 7));
-      if (res.statusCode == 200) {
-        final List data = json.decode(res.body);
-        setState(() {
-          _cmMarea =
-              int.parse(data[0]['valore'].toString().replaceAll('+', ''));
-          _marea = "$_cmMarea cm";
-        });
-      }
+      final data = json.decode(json.decode(res.body)['contents']);
+      setState(() {
+        _cmMarea = int.parse(data[0]['valore'].toString().replaceAll('+', ''));
+        _mareaText = "$_cmMarea cm";
+      });
     } catch (e) {
-      setState(() => _marea = "45 cm (S)");
+      setState(() => _mareaText = "40 cm (S)");
     }
   }
 
-  void _avvia() async {
+  void _attivaNavigatore() async {
     _fetchMarea();
     LocationPermission p = await Geolocator.requestPermission();
     if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
@@ -88,7 +76,8 @@ class _LagunaAppState extends State<LagunaApp> {
         setState(() {
           _pos = LatLng(pos.latitude, pos.longitude);
           _speed = pos.speed * 3.6;
-          if (_speed > 1.5) _heading = pos.heading;
+          if (_speed > 1.5)
+            _heading = pos.heading; // Aggiorna rotta solo in movimento
         });
         _mapController.move(_pos, 15);
       });
@@ -97,24 +86,22 @@ class _LagunaAppState extends State<LagunaApp> {
 
   @override
   Widget build(BuildContext context) {
-    double profTotale = _calcolaProfondita(_pos);
+    double prof = _getDepth(_pos);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF000A12),
+      backgroundColor: Colors.black,
       body: Stack(
         children: [
+          // 1. MAPPA (Sempre visibile)
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(initialCenter: _pos, initialZoom: 14),
             children: [
-              // LIVELLO BATIMETRICO PROFESSIONALE (ESRI Ocean)
-              // Mostra i fondali, le secche e le curve di livello
               TileLayer(
-                urlTemplate:
-                    'https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}',
-                userAgentPackageName: 'it.venezia.nautical',
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'it.venezia.laguna',
               ),
-              // LIVELLO OPENSEAMAP (Briccole e segnalamenti)
+              // LIVELLO NAUTICO (Briccole e batimetriche tratteggiate)
               TileLayer(
                 urlTemplate:
                     'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
@@ -128,40 +115,41 @@ class _LagunaAppState extends State<LagunaApp> {
                   child: Transform.rotate(
                     angle: (_heading * (math.pi / 180)),
                     child: const Icon(Icons.navigation,
-                        color: Colors.blue, size: 45),
+                        color: Colors.red, size: 45),
                   ),
                 )
               ]),
             ],
           ),
 
-          // DASHBOARD NAUTICA
+          // 2. DASHBOARD (4 STATS)
           Positioned(
-            top: 50,
+            top: 40,
             left: 10,
             right: 10,
             child: Container(
-              padding: const EdgeInsets.all(15),
+              padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 5),
               decoration: BoxDecoration(
                 color: const Color(0xFF001529).withOpacity(0.9),
                 borderRadius: BorderRadius.circular(15),
                 border: Border.all(
-                    color: profTotale < 2.0 ? Colors.red : Colors.cyanAccent,
+                    color: prof < 2.0 ? Colors.red : Colors.cyanAccent,
                     width: 2),
               ),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  _stat("MAREA", _marea, Colors.cyanAccent),
-                  _stat("PROFONDITÀ", "${profTotale.toStringAsFixed(1)} m",
-                      profTotale < 2.0 ? Colors.red : Colors.white),
+                  _stat("MAREA", _mareaText, Colors.cyanAccent),
+                  _stat("PROF.", "${prof.toStringAsFixed(1)}m",
+                      prof < 2.0 ? Colors.red : Colors.white),
+                  _stat("ROTTA", "${_heading.toInt()}°", Colors.orangeAccent),
                   _stat("KM/H", _speed.toStringAsFixed(1), Colors.greenAccent),
                 ],
               ),
             ),
           ),
 
-          // BUSSOLA INFERIORE
+          // BUSSOLA VISIVA
           Positioned(
             bottom: 30,
             left: 20,
@@ -172,7 +160,7 @@ class _LagunaAppState extends State<LagunaApp> {
                   color: Colors.black54, shape: BoxShape.circle),
               child: Transform.rotate(
                 angle: (_heading * (math.pi / 180) * -1),
-                child: const Icon(Icons.explore, color: Colors.white, size: 50),
+                child: const Icon(Icons.explore, color: Colors.white, size: 55),
               ),
             ),
           ),
@@ -180,9 +168,10 @@ class _LagunaAppState extends State<LagunaApp> {
           if (!_isActive)
             Center(
               child: ElevatedButton.icon(
-                icon: const Icon(Icons.anchor, size: 30),
-                label: const Text("ATTIVA PLOTTER"),
-                onPressed: _avvia,
+                icon: const Icon(Icons.play_circle_fill, size: 40),
+                label: const Text("AVVIA SISTEMA NAUTICO",
+                    style: TextStyle(fontSize: 18)),
+                onPressed: _attivaNavigatore,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.cyanAccent,
                   foregroundColor: Colors.black,
@@ -195,13 +184,21 @@ class _LagunaAppState extends State<LagunaApp> {
     );
   }
 
-  Widget _stat(String l, String v, Color c) => Column(children: [
-        Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
-        Text(v,
-            style: TextStyle(
-                color: c,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                fontFamily: 'monospace')),
-      ]);
+  Widget _stat(String l, String v, Color c) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(l,
+              style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 8,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(v,
+              style: TextStyle(
+                  color: c,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'monospace')),
+        ],
+      );
 }
