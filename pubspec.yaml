@@ -1,5 +1,5 @@
 name: laguna_app
-description: "Navigatore Laguna Venezia con Bussola"
+description: "Navigatore Laguna Venezia - Pro Version"
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -10,16 +10,16 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # MOTORE MAPPA E COORDINATE
+  # --- MOTORE MAPPE ---
   flutter_map: ^6.1.0
   latlong2: ^0.9.1
 
-  # SENSORI E RETE
-  geolocator: ^10.1.0
-  flutter_compass: ^0.8.0
-  http: ^1.1.0
+  # --- POSIZIONE E SENSORI ---
+  geolocator: ^11.0.0
+  wakelock_plus: ^1.2.8
 
-  # ICONE
+  # --- RETE E ICONE ---
+  http: ^1.2.1
   cupertino_icons: ^1.0.6
 
 dev_dependencies:

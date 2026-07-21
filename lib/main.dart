@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:math' as math;
@@ -27,15 +28,13 @@ class _LagunaAppState extends State<LagunaApp> {
   final MapController _mapController = MapController();
   bool _active = false;
 
-  // --- MAREA ---
   Future<void> _fetchMarea() async {
     const String target =
         "https://portale.comune.venezia.it/marea/esporta-dati?id=1";
-    final String proxy =
+    final String proxyUrl =
         "https://api.allorigins.win/get?url=${Uri.encodeComponent(target)}";
     try {
-      final res =
-          await http.get(Uri.parse(proxy)).timeout(const Duration(seconds: 5));
+      final res = await http.get(Uri.parse(proxyUrl));
       if (res.statusCode == 200) {
         final data = json.decode(json.decode(res.body)['contents']);
         setState(() {
@@ -57,9 +56,7 @@ class _LagunaAppState extends State<LagunaApp> {
         builder: (c) => AlertDialog(
               title: const Text("Marea Manuale"),
               content: TextField(
-                  controller: _txt,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(hintText: "cm")),
+                  controller: _txt, keyboardType: TextInputType.number),
               actions: [
                 TextButton(
                     onPressed: () {
@@ -77,7 +74,6 @@ class _LagunaAppState extends State<LagunaApp> {
             ));
   }
 
-  // --- PROFONDITÀ ---
   double _getDepth(LatLng p) {
     double base = 1.2;
     if (p.latitude < 45.433 && p.latitude > 45.425)
@@ -86,9 +82,10 @@ class _LagunaAppState extends State<LagunaApp> {
     return base + (_mareaCm / 100);
   }
 
-  // --- GPS ---
   void _avvia() async {
     _fetchMarea();
+    WakelockPlus.enable(); // Attiva Always-On
+
     LocationPermission p = await Geolocator.requestPermission();
     if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
       setState(() => _active = true);
@@ -131,7 +128,7 @@ class _LagunaAppState extends State<LagunaApp> {
                       'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
                   backgroundColor: Colors.transparent),
 
-              // LA SCIA ROSSA
+              // SCIA ROSSA
               PolylineLayer(polylines: [
                 Polyline(points: _scia, strokeWidth: 4, color: Colors.red),
               ]),
@@ -206,7 +203,7 @@ class _LagunaAppState extends State<LagunaApp> {
             Center(
                 child: ElevatedButton.icon(
                     icon: const Icon(Icons.anchor),
-                    label: const Text("AVVIA SISTEMA"),
+                    label: const Text("ATTIVA SISTEMA"),
                     onPressed: _avvia,
                     style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.cyanAccent,
